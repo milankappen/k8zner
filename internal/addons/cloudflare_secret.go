@@ -23,7 +23,7 @@ func createCloudflareSecrets(ctx context.Context, client k8sclient.Client, cfg *
 
 	// Create namespaces first if needed
 	if cfg.Addons.ExternalDNS.Enabled {
-		if err := ensureNamespace(ctx, client, "external-dns", nil); err != nil {
+		if err := ensureNamespace(ctx, client, "external-dns", withBaselinePodSecurity(nil)); err != nil {
 			return err
 		}
 

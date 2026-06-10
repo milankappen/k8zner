@@ -102,7 +102,7 @@ func pollCRDStatus(ctx context.Context, p *tea.Program, clusterName string, kube
 func fetchCRDStatus(ctx context.Context, k8sClient client.Client, clusterName string) (CRDStatusMsg, bool) {
 	cluster := &k8znerv1alpha1.K8znerCluster{}
 	key := client.ObjectKey{
-		Namespace: "k8zner-system",
+		Namespace: Namespace,
 		Name:      clusterName,
 	}
 

@@ -19,6 +19,20 @@ var baselinePodSecurityLabels = map[string]string{
 	"pod-security.kubernetes.io/warn":    "baseline",
 }
 
+// withBaselinePodSecurity merges the baseline pod security labels into the given
+// label map. Caller-provided keys win on conflict, and the input map is left
+// untouched so shared label maps stay safe to reuse.
+func withBaselinePodSecurity(labels map[string]string) map[string]string {
+	merged := make(map[string]string, len(labels)+len(baselinePodSecurityLabels))
+	for k, v := range baselinePodSecurityLabels {
+		merged[k] = v
+	}
+	for k, v := range labels {
+		merged[k] = v
+	}
+	return merged
+}
+
 // ensureNamespace creates a Kubernetes namespace with the given labels using server-side apply.
 func ensureNamespace(ctx context.Context, client k8sclient.Client, name string, labels map[string]string) error {
 	yaml := helm.NamespaceManifest(name, labels)

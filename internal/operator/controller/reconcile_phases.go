@@ -321,6 +321,7 @@ func (r *ClusterReconciler) reconcileRunningPhase(ctx context.Context, cluster *
 	r.reconcileInfraHealth(ctx, cluster)
 	r.reconcileAddonHealth(ctx, cluster)
 	r.reconcileConnectivityHealth(ctx, cluster)
+	r.reconcileVersionSkew(ctx, cluster)
 
 	return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
 }

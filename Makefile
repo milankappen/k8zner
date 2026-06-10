@@ -113,7 +113,7 @@ manifests: $(CONTROLLER_GEN) generate
 
 # Check that generated manifests and deepcopy code are up to date (for CI)
 check-manifests: manifests
-	@git diff --exit-code config/crd deploy/crds internal/addons/operator-chart/crds api/v1alpha1/zz_generated.deepcopy.go || \
+	@git diff --exit-code config/crd deploy/crds internal/addons/operator-chart/crds internal/operator/crds/manifests api/v1alpha1/zz_generated.deepcopy.go || \
 		(echo "ERROR: generated manifests out of date. Run 'make manifests' and commit the result." && exit 1)
 	@echo "Generated manifests up to date."
 
@@ -121,11 +121,13 @@ $(CONTROLLER_GEN):
 	@mkdir -p $(shell pwd)/bin
 	GOBIN=$(shell pwd)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 
-# Sync CRD from canonical source to deploy/ and operator-chart/
+# Sync CRD from canonical source to deploy/, operator-chart/, and the
+# operator's embedded copy (self-applied at startup).
 sync-crds:
 	@echo "Syncing CRDs from config/crd/bases/ ..."
 	cp config/crd/bases/k8zner.io_k8znerclusters.yaml deploy/crds/k8zner.io_k8znerclusters.yaml
 	cp config/crd/bases/k8zner.io_k8znerclusters.yaml internal/addons/operator-chart/crds/k8zner.io_k8znerclusters.yaml
+	cp config/crd/bases/k8zner.io_k8znerclusters.yaml internal/operator/crds/manifests/k8zner.io_k8znerclusters.yaml
 	@echo "CRDs synced."
 
 # Check that CRD copies are in sync (for CI)
@@ -134,6 +136,8 @@ check-crds:
 		(echo "ERROR: deploy/crds/ CRD out of sync. Run 'make sync-crds'" && exit 1)
 	@diff -q config/crd/bases/k8zner.io_k8znerclusters.yaml internal/addons/operator-chart/crds/k8zner.io_k8znerclusters.yaml || \
 		(echo "ERROR: operator-chart/crds/ CRD out of sync. Run 'make sync-crds'" && exit 1)
+	@diff -q config/crd/bases/k8zner.io_k8znerclusters.yaml internal/operator/crds/manifests/k8zner.io_k8znerclusters.yaml || \
+		(echo "ERROR: internal/operator/crds/manifests/ CRD out of sync. Run 'make sync-crds'" && exit 1)
 	@echo "CRDs in sync."
 
 # Sync operator chart from deploy/helm/ (source of truth) to internal/addons/operator-chart/

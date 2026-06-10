@@ -240,6 +240,8 @@ func (r *ClusterReconciler) ensureHCloudClient() error {
 	return nil
 }
 
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=create
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;update;patch,resourceNames=k8znerclusters.k8zner.io
 // +kubebuilder:rbac:groups=k8zner.io,resources=k8znerclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8zner.io,resources=k8znerclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=k8zner.io,resources=k8znerclusters/finalizers,verbs=update

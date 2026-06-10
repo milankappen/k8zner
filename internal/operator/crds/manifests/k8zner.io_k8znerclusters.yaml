@@ -1,0 +1,816 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: k8znerclusters.k8zner.io
+spec:
+  group: k8zner.io
+  names:
+    kind: K8znerCluster
+    listKind: K8znerClusterList
+    plural: k8znerclusters
+    shortNames:
+    - k8z
+    singular: k8znercluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.controlPlanes.ready
+      name: CPs
+      type: string
+    - jsonPath: .status.workers.ready
+      name: Workers
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: K8znerCluster is the Schema for the k8znerclusters API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: K8znerClusterSpec defines the desired state of a K8zner-managed
+              cluster.
+            properties:
+              addons:
+                description: Addons specifies which addons should be installed
+                properties:
+                  argoSubdomain:
+                    description: |-
+                      ArgoSubdomain overrides the default "argo" subdomain for ArgoCD ingress.
+                      The full host will be "{argoSubdomain}.{domain}".
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                    type: string
+                  argocd:
+                    description: ArgoCD for GitOps
+                    type: boolean
+                  certManager:
+                    default: true
+                    description: CertManager for TLS certificates
+                    type: boolean
+                  externalDns:
+                    description: ExternalDNS for automatic DNS management
+                    type: boolean
+                  grafanaSubdomain:
+                    description: |-
+                      GrafanaSubdomain overrides the default "grafana" subdomain for Grafana ingress.
+                      The full host will be "{grafanaSubdomain}.{domain}".
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                    type: string
+                  metricsServer:
+                    default: true
+                    description: MetricsServer for resource metrics
+                    type: boolean
+                  monitoring:
+                    description: Monitoring enables kube-prometheus-stack (Prometheus,
+                      Grafana, Alertmanager)
+                    type: boolean
+                  traefik:
+                    default: true
+                    description: Traefik ingress controller
+                    type: boolean
+                type: object
+              backup:
+                description: Backup configures automated etcd backups
+                properties:
+                  enabled:
+                    description: Enabled turns on automated backups
+                    type: boolean
+                  retention:
+                    default: 168h
+                    description: 'Retention is how long to keep backups (default:
+                      168h = 7 days)'
+                    type: string
+                  s3SecretRef:
+                    description: |-
+                      S3SecretRef references a Secret containing S3 credentials for backup storage.
+                      The Secret must contain keys: access-key, secret-key, endpoint, bucket, region
+                      If not specified, backup will be skipped.
+                    properties:
+                      name:
+                        description: Name is the name of the Secret
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  schedule:
+                    default: 0 * * * *
+                    description: 'Schedule is the cron schedule for backups (default:
+                      hourly)'
+                    type: string
+                required:
+                - enabled
+                type: object
+              bootstrap:
+                description: Bootstrap contains the state from CLI bootstrap (if applicable)
+                properties:
+                  bootstrapNode:
+                    description: BootstrapNode is the name of the first control plane
+                      server
+                    type: string
+                  bootstrapNodeID:
+                    description: BootstrapNodeID is the Hetzner server ID of the first
+                      control plane
+                    format: int64
+                    type: integer
+                  completed:
+                    description: Completed indicates the CLI bootstrap has finished
+                    type: boolean
+                  completedAt:
+                    description: CompletedAt is when bootstrap completed
+                    format: date-time
+                    type: string
+                  publicIP:
+                    description: PublicIP is the public IP of the bootstrap node (before
+                      LB)
+                    type: string
+                required:
+                - completed
+                type: object
+              controlPlanes:
+                description: ControlPlanes defines the control plane configuration
+                properties:
+                  count:
+                    default: 1
+                    description: Count is the number of control plane nodes (1 for
+                      dev, 3 for HA)
+                    enum:
+                    - 1
+                    - 3
+                    - 5
+                    type: integer
+                  size:
+                    default: cx23
+                    description: |-
+                      Size is the Hetzner server type (e.g., cx23, cx33, cpx22, cpx32)
+                      CX types (dedicated vCPU) have consistent performance, CPX types (shared vCPU) have better availability
+                    type: string
+                required:
+                - count
+                - size
+                type: object
+              credentialsRef:
+                description: |-
+                  CredentialsRef references the Secret containing HCloud token and Talos secrets.
+                  Once set, it cannot be changed or removed: swapping credentials mid-lifecycle
+                  would silently re-point provisioning at a different Hetzner project.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+                x-kubernetes-validations:
+                - message: credentialsRef is immutable once set
+                  rule: '!has(oldSelf.name) || oldSelf.name == "" || (has(self.name)
+                    && self.name == oldSelf.name)'
+              domain:
+                description: |-
+                  Domain is the base domain for ingress resources (e.g., "example.com").
+                  When set, addons like ArgoCD and Grafana will have ingress automatically configured.
+                maxLength: 253
+                pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$
+                type: string
+              firewall:
+                description: Firewall configures the cluster firewall rules
+                properties:
+                  enabled:
+                    default: true
+                    description: Enabled determines if a firewall should be created
+                    type: boolean
+                type: object
+              healthCheck:
+                description: HealthCheck configures health monitoring thresholds
+                properties:
+                  etcdUnhealthyThreshold:
+                    default: 2m
+                    description: EtcdUnhealthyThreshold is how long etcd can be unhealthy
+                      before CP replacement
+                    type: string
+                  nodeNotReadyThreshold:
+                    default: 3m
+                    description: NodeNotReadyThreshold is how long a node can be NotReady
+                      before replacement
+                    type: string
+                type: object
+              kubernetes:
+                description: Kubernetes specifies the Kubernetes version
+                properties:
+                  version:
+                    description: Version is the Kubernetes version (e.g., "1.32.2")
+                    pattern: ^\d+\.\d+\.\d+$
+                    type: string
+                required:
+                - version
+                type: object
+              network:
+                description: Network configures the cluster networking
+                properties:
+                  ipv4CIDR:
+                    default: 10.0.0.0/16
+                    description: IPv4CIDR is the network CIDR for the Hetzner private
+                      network
+                    type: string
+                  nodeIPv4CIDR:
+                    description: |-
+                      NodeIPv4CIDR is the CIDR range for node IPs within the private network.
+                      This is used to calculate subnets for control planes, load balancers, and workers.
+                      If not set, defaults to "10.0.0.0/17" (lower half of the network CIDR).
+                    type: string
+                  podCIDR:
+                    default: 10.244.0.0/16
+                    description: PodCIDR is the CIDR range for pod IPs
+                    type: string
+                  serviceCIDR:
+                    default: 10.96.0.0/16
+                    description: ServiceCIDR is the CIDR range for service IPs
+                    type: string
+                type: object
+              paused:
+                description: Paused stops the operator from reconciling this cluster
+                type: boolean
+              placementGroup:
+                description: PlacementGroup configures server placement strategy
+                properties:
+                  enabled:
+                    default: true
+                    description: Enabled determines if a placement group should be
+                      created
+                    type: boolean
+                  type:
+                    default: spread
+                    description: Type is the placement group type (spread)
+                    enum:
+                    - spread
+                    type: string
+                type: object
+              region:
+                description: Region is the Hetzner Cloud region (e.g., fsn1, nbg1,
+                  hel1)
+                enum:
+                - fsn1
+                - nbg1
+                - hel1
+                type: string
+                x-kubernetes-validations:
+                - message: region is immutable
+                  rule: self == oldSelf
+              talos:
+                description: Talos specifies the Talos configuration
+                properties:
+                  extensions:
+                    description: Extensions is a list of Talos system extensions to
+                      include
+                    items:
+                      type: string
+                    type: array
+                  schematicID:
+                    description: SchematicID is the Talos Factory schematic ID for
+                      custom images
+                    type: string
+                  version:
+                    description: Version is the Talos version (e.g., "v1.10.2")
+                    pattern: ^v\d+\.\d+\.\d+$
+                    type: string
+                required:
+                - version
+                type: object
+              workers:
+                description: Workers defines the worker node configuration
+                properties:
+                  count:
+                    description: Count is the desired number of worker nodes
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  size:
+                    default: cx23
+                    description: |-
+                      Size is the Hetzner server type (e.g., cx23, cx33, cpx22, cpx32)
+                      CX types (dedicated vCPU) have consistent performance, CPX types (shared vCPU) have better availability
+                    type: string
+                required:
+                - count
+                - size
+                type: object
+            required:
+            - controlPlanes
+            - credentialsRef
+            - kubernetes
+            - region
+            - talos
+            - workers
+            type: object
+          status:
+            description: K8znerClusterStatus defines the observed state of K8znerCluster.
+            properties:
+              addons:
+                additionalProperties:
+                  description: AddonStatus represents the status of an installed addon.
+                  properties:
+                    duration:
+                      description: Duration is a human-readable duration of the installation
+                      type: string
+                    healthy:
+                      description: Healthy indicates if the addon is healthy
+                      type: boolean
+                    installOrder:
+                      description: InstallOrder is the order in which this addon should
+                        be installed
+                      type: integer
+                    installed:
+                      description: Installed indicates if the addon is installed
+                      type: boolean
+                    lastHealthCheck:
+                      description: LastHealthCheck is when the addon runtime health
+                        was last checked
+                      format: date-time
+                      type: string
+                    lastTransitionTime:
+                      description: LastTransitionTime is when the addon phase last
+                        changed
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message provides additional status information
+                      type: string
+                    phase:
+                      description: Phase is the current installation phase of the
+                        addon
+                      enum:
+                      - Pending
+                      - Installing
+                      - Installed
+                      - Failed
+                      - Upgrading
+                      type: string
+                    retryCount:
+                      description: RetryCount tracks the number of installation retries
+                      type: integer
+                    startedAt:
+                      description: StartedAt is when the addon installation started
+                      format: date-time
+                      type: string
+                    version:
+                      description: Version is the installed version
+                      type: string
+                  required:
+                  - healthy
+                  - installed
+                  type: object
+                description: Addons shows the status of installed addons
+                type: object
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              connectivity:
+                description: Connectivity tracks external connectivity probe results
+                properties:
+                  endpoints:
+                    description: Endpoints is the health of external endpoints (ArgoCD,
+                      Grafana, etc.)
+                    items:
+                      description: EndpointHealth represents the health of a single
+                        external endpoint.
+                      properties:
+                        dnsReady:
+                          description: DNSReady indicates the DNS record resolves
+                          type: boolean
+                        host:
+                          description: Host is the FQDN of the endpoint
+                          type: string
+                        httpReady:
+                          description: HTTPReady indicates HTTPS returns a successful
+                            response
+                          type: boolean
+                        message:
+                          description: Message provides additional context
+                          type: string
+                        tlsReady:
+                          description: TLSReady indicates the TLS certificate exists
+                          type: boolean
+                      required:
+                      - dnsReady
+                      - host
+                      - httpReady
+                      - tlsReady
+                      type: object
+                    type: array
+                  kubeAPIReady:
+                    description: KubeAPIReady indicates the Kubernetes API is reachable
+                    type: boolean
+                  lastCheck:
+                    description: LastCheck is when connectivity was last checked
+                    format: date-time
+                    type: string
+                  metricsAPIReady:
+                    description: MetricsAPIReady indicates the metrics API is available
+                    type: boolean
+                required:
+                - kubeAPIReady
+                - metricsAPIReady
+                type: object
+              controlPlaneEndpoint:
+                description: ControlPlaneEndpoint is the endpoint for the Kubernetes
+                  API
+                type: string
+              controlPlanes:
+                description: ControlPlanes shows the status of control plane nodes
+                properties:
+                  desired:
+                    description: Desired is the desired number of nodes
+                    type: integer
+                  nodes:
+                    description: Nodes is the detailed status of each node
+                    items:
+                      description: NodeStatus represents the status of a single node.
+                      properties:
+                        healthy:
+                          description: Healthy indicates if the node is healthy (derived
+                            from Phase == NodePhaseReady)
+                          type: boolean
+                        lastHealthCheck:
+                          description: LastHealthCheck is when health was last checked
+                          format: date-time
+                          type: string
+                        name:
+                          description: Name is the Kubernetes node name
+                          type: string
+                        phase:
+                          description: Phase is the lifecycle phase of this node
+                          enum:
+                          - CreatingServer
+                          - WaitingForIP
+                          - WaitingForTalosAPI
+                          - ApplyingTalosConfig
+                          - RebootingWithConfig
+                          - WaitingForK8s
+                          - NodeInitializing
+                          - Ready
+                          - Unhealthy
+                          - Draining
+                          - RemovingFromEtcd
+                          - DeletingServer
+                          - Failed
+                          type: string
+                        phaseReason:
+                          description: PhaseReason provides additional context for
+                            the current phase
+                          type: string
+                        phaseTransitionTime:
+                          description: PhaseTransitionTime is when the node transitioned
+                            to the current phase
+                          format: date-time
+                          type: string
+                        privateIP:
+                          description: PrivateIP is the private network IP
+                          type: string
+                        publicIP:
+                          description: PublicIP is the public IP (if any)
+                          type: string
+                        serverID:
+                          description: ServerID is the Hetzner server ID
+                          format: int64
+                          type: integer
+                        unhealthyReason:
+                          description: UnhealthyReason explains why the node is unhealthy
+                          type: string
+                        unhealthySince:
+                          description: UnhealthySince is when the node became unhealthy
+                          format: date-time
+                          type: string
+                      required:
+                      - healthy
+                      - name
+                      - serverID
+                      type: object
+                    type: array
+                  ready:
+                    description: Ready is the number of healthy nodes
+                    type: integer
+                  unhealthy:
+                    description: Unhealthy is the number of unhealthy nodes
+                    type: integer
+                required:
+                - desired
+                - ready
+                type: object
+              imageSnapshot:
+                description: ImageSnapshot tracks the Talos image snapshot
+                properties:
+                  createdAt:
+                    description: CreatedAt is when the snapshot was created
+                    format: date-time
+                    type: string
+                  schematicID:
+                    description: SchematicID is the Talos Factory schematic ID
+                    type: string
+                  snapshotID:
+                    description: SnapshotID is the Hetzner snapshot ID
+                    format: int64
+                    type: integer
+                  version:
+                    description: Version is the Talos version of the snapshot
+                    type: string
+                type: object
+              infrastructure:
+                description: Infrastructure tracks the provisioned infrastructure
+                  resources
+                properties:
+                  firewallID:
+                    description: FirewallID is the Hetzner firewall ID
+                    format: int64
+                    type: integer
+                  firewallReady:
+                    description: FirewallReady indicates the firewall exists and is
+                      healthy
+                    type: boolean
+                  loadBalancerID:
+                    description: LoadBalancerID is the Hetzner load balancer ID
+                    format: int64
+                    type: integer
+                  loadBalancerIP:
+                    description: LoadBalancerIP is the public IP of the load balancer
+                    type: string
+                  loadBalancerPrivateIP:
+                    description: |-
+                      LoadBalancerPrivateIP is the private IP of the load balancer within the cluster network
+                      Used for internal cluster communication (preferred over public IP)
+                    type: string
+                  loadBalancerReady:
+                    description: LoadBalancerReady indicates the load balancer exists
+                      and has a public IP
+                    type: boolean
+                  networkID:
+                    description: NetworkID is the Hetzner network ID
+                    format: int64
+                    type: integer
+                  networkReady:
+                    description: NetworkReady indicates the network exists and is
+                      healthy
+                    type: boolean
+                  placementGroupID:
+                    description: PlacementGroupID is the Hetzner placement group ID
+                    format: int64
+                    type: integer
+                  snapshotID:
+                    description: SnapshotID is the Hetzner Talos image snapshot ID
+                    format: int64
+                    type: integer
+                  sshKeyID:
+                    description: SSHKeyID is the Hetzner SSH key ID used for nodes
+                    format: int64
+                    type: integer
+                type: object
+              lastErrors:
+                description: LastErrors is a ring buffer of recent errors (max 10).
+                items:
+                  description: ErrorRecord records a recent error for observability.
+                  properties:
+                    component:
+                      description: Component is the component that produced the error
+                      type: string
+                    message:
+                      description: Message is the error message
+                      type: string
+                    phase:
+                      description: Phase is the provisioning phase when the error
+                        occurred
+                      type: string
+                    time:
+                      description: Time is when the error occurred
+                      format: date-time
+                      type: string
+                  required:
+                  - message
+                  - time
+                  type: object
+                type: array
+              lastReconcileTime:
+                description: LastReconcileTime is when the operator last reconciled
+                  this cluster
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the last observed generation
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the overall cluster phase
+                enum:
+                - Provisioning
+                - Running
+                - Degraded
+                - Healing
+                - Failed
+                type: string
+              phaseHistory:
+                description: PhaseHistory records timing information for each provisioning
+                  phase.
+                items:
+                  description: PhaseRecord records timing information for a provisioning
+                    phase.
+                  properties:
+                    duration:
+                      description: Duration is a human-readable duration string
+                      type: string
+                    endedAt:
+                      description: EndedAt is when this phase completed
+                      format: date-time
+                      type: string
+                    error:
+                      description: Error is set if the phase encountered an error
+                      type: string
+                    phase:
+                      description: Phase is the provisioning phase
+                      type: string
+                    startedAt:
+                      description: StartedAt is when this phase started
+                      format: date-time
+                      type: string
+                  required:
+                  - phase
+                  - startedAt
+                  type: object
+                type: array
+              phaseStartedAt:
+                description: |-
+                  PhaseStartedAt tracks when the current provisioning phase started.
+                  Used for timeout detection in long-running phases like addon installation.
+                format: date-time
+                type: string
+              provisioningPhase:
+                description: ProvisioningPhase tracks the current provisioning stage
+                type: string
+              workers:
+                description: Workers shows the status of worker nodes
+                properties:
+                  desired:
+                    description: Desired is the desired number of nodes
+                    type: integer
+                  nodes:
+                    description: Nodes is the detailed status of each node
+                    items:
+                      description: NodeStatus represents the status of a single node.
+                      properties:
+                        healthy:
+                          description: Healthy indicates if the node is healthy (derived
+                            from Phase == NodePhaseReady)
+                          type: boolean
+                        lastHealthCheck:
+                          description: LastHealthCheck is when health was last checked
+                          format: date-time
+                          type: string
+                        name:
+                          description: Name is the Kubernetes node name
+                          type: string
+                        phase:
+                          description: Phase is the lifecycle phase of this node
+                          enum:
+                          - CreatingServer
+                          - WaitingForIP
+                          - WaitingForTalosAPI
+                          - ApplyingTalosConfig
+                          - RebootingWithConfig
+                          - WaitingForK8s
+                          - NodeInitializing
+                          - Ready
+                          - Unhealthy
+                          - Draining
+                          - RemovingFromEtcd
+                          - DeletingServer
+                          - Failed
+                          type: string
+                        phaseReason:
+                          description: PhaseReason provides additional context for
+                            the current phase
+                          type: string
+                        phaseTransitionTime:
+                          description: PhaseTransitionTime is when the node transitioned
+                            to the current phase
+                          format: date-time
+                          type: string
+                        privateIP:
+                          description: PrivateIP is the private network IP
+                          type: string
+                        publicIP:
+                          description: PublicIP is the public IP (if any)
+                          type: string
+                        serverID:
+                          description: ServerID is the Hetzner server ID
+                          format: int64
+                          type: integer
+                        unhealthyReason:
+                          description: UnhealthyReason explains why the node is unhealthy
+                          type: string
+                        unhealthySince:
+                          description: UnhealthySince is when the node became unhealthy
+                          format: date-time
+                          type: string
+                      required:
+                      - healthy
+                      - name
+                      - serverID
+                      type: object
+                    type: array
+                  ready:
+                    description: Ready is the number of healthy nodes
+                    type: integer
+                  unhealthy:
+                    description: Unhealthy is the number of unhealthy nodes
+                    type: integer
+                required:
+                - desired
+                - ready
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

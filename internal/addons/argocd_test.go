@@ -386,11 +386,14 @@ func TestBuildArgoCDRedis(t *testing.T) {
 
 func TestArgoCDNamespace(t *testing.T) {
 	t.Parallel()
-	ns := helm.NamespaceManifest("argocd", map[string]string{"name": "argocd"})
+	ns := helm.NamespaceManifest("argocd", withBaselinePodSecurity(map[string]string{"name": "argocd"}))
 
 	assert.Contains(t, ns, "apiVersion: v1")
 	assert.Contains(t, ns, "kind: Namespace")
 	assert.Contains(t, ns, "name: argocd")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/enforce: baseline")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/audit: baseline")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/warn: baseline")
 }
 
 func TestBuildArgoCDValuesCustomHelmValues(t *testing.T) {

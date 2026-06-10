@@ -59,6 +59,61 @@ func (m *mockK8sClient) HasIngressClass(ctx context.Context, name string) (bool,
 	return args.Bool(0), args.Error(1)
 }
 
+func TestWithBaselinePodSecurity(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   map[string]string
+	}{
+		{
+			name:   "nil map gets baseline labels",
+			labels: nil,
+			want: map[string]string{
+				"pod-security.kubernetes.io/enforce": "baseline",
+				"pod-security.kubernetes.io/audit":   "baseline",
+				"pod-security.kubernetes.io/warn":    "baseline",
+			},
+		},
+		{
+			name:   "existing labels preserved",
+			labels: map[string]string{"name": "argocd"},
+			want: map[string]string{
+				"name":                               "argocd",
+				"pod-security.kubernetes.io/enforce": "baseline",
+				"pod-security.kubernetes.io/audit":   "baseline",
+				"pod-security.kubernetes.io/warn":    "baseline",
+			},
+		},
+		{
+			name:   "caller-provided keys are not overwritten",
+			labels: map[string]string{"pod-security.kubernetes.io/enforce": "privileged"},
+			want: map[string]string{
+				"pod-security.kubernetes.io/enforce": "privileged",
+				"pod-security.kubernetes.io/audit":   "baseline",
+				"pod-security.kubernetes.io/warn":    "baseline",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := withBaselinePodSecurity(tt.labels)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestWithBaselinePodSecurity_DoesNotMutateInput(t *testing.T) {
+	t.Parallel()
+	input := map[string]string{"name": "monitoring"}
+
+	_ = withBaselinePodSecurity(input)
+
+	assert.Equal(t, map[string]string{"name": "monitoring"}, input)
+}
+
 func TestApplyManifests(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

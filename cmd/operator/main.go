@@ -2,23 +2,29 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"go.uber.org/zap/zapcore"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
 	"github.com/milankappen/k8zner/internal/operator/controller"
+	"github.com/milankappen/k8zner/internal/operator/crds"
 )
 
 var (
@@ -32,6 +38,24 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(k8znerv1alpha1.AddToScheme(scheme))
+}
+
+// ensureCRDs server-side-applies the operator's embedded CRDs with a direct
+// (uncached) client, bounded so a hung apiserver cannot stall startup forever.
+func ensureCRDs(restConfig *rest.Config) error {
+	s := runtime.NewScheme()
+	if err := apiextensionsv1.AddToScheme(s); err != nil {
+		return fmt.Errorf("failed to register apiextensions scheme: %w", err)
+	}
+
+	directClient, err := client.New(restConfig, client.Options{Scheme: s})
+	if err != nil {
+		return fmt.Errorf("failed to create client for CRD apply: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return crds.Ensure(ctx, directClient)
 }
 
 // loadHCloudToken reads the Hetzner Cloud API token from the file named by
@@ -102,7 +126,16 @@ func main() {
 
 	setupLog.Info("starting k8zner-operator", "version", Version)
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restConfig := ctrl.GetConfigOrDie()
+
+	// Self-apply the CRD before the manager starts so the served schema
+	// always matches this binary (Helm never upgrades chart crds/).
+	if err := ensureCRDs(restConfig); err != nil {
+		setupLog.Error(err, "unable to ensure CRDs")
+		os.Exit(1)
+	}
+
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: metricsAddr,

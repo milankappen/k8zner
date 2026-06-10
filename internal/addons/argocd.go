@@ -28,7 +28,7 @@ func applyArgoCD(ctx context.Context, client k8sclient.Client, cfg *config.Confi
 		}
 	}
 
-	if err := ensureNamespace(ctx, client, "argocd", map[string]string{"name": "argocd"}); err != nil {
+	if err := ensureNamespace(ctx, client, "argocd", withBaselinePodSecurity(map[string]string{"name": "argocd"})); err != nil {
 		return err
 	}
 

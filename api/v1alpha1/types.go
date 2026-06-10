@@ -716,6 +716,10 @@ const (
 	ConditionImageReady = "ImageReady"
 	// ConditionBootstrapped indicates the cluster has been bootstrapped
 	ConditionBootstrapped = "Bootstrapped"
+	// ConditionUpToDate indicates node versions match the spec
+	// (False means an upgrade is pending; the operator does not perform
+	// node upgrades itself — run `k8zner apply` to roll them out)
+	ConditionUpToDate = "UpToDate"
 )
 
 // Credentials Secret keys

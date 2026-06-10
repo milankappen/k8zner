@@ -10,6 +10,11 @@ import (
 	"github.com/milankappen/k8zner/internal/ui/benchmarks"
 )
 
+// Namespace is the Kubernetes namespace where k8zner resources live. It is
+// exported so the CLI layer can share the same definition without an import
+// cycle (the handlers package already imports this one).
+const Namespace = "k8zner-system"
+
 // BootstrapPhase represents a CLI bootstrap phase for display.
 type BootstrapPhase struct {
 	Name   string

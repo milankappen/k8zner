@@ -348,11 +348,14 @@ func TestBuildResourceValues(t *testing.T) {
 
 func TestMonitoringNamespace(t *testing.T) {
 	t.Parallel()
-	ns := helm.NamespaceManifest("monitoring", map[string]string{"name": "monitoring"})
+	ns := helm.NamespaceManifest("monitoring", withBaselinePodSecurity(map[string]string{"name": "monitoring"}))
 
 	assert.Contains(t, ns, "apiVersion: v1")
 	assert.Contains(t, ns, "kind: Namespace")
 	assert.Contains(t, ns, "name: monitoring")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/enforce: baseline")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/audit: baseline")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/warn: baseline")
 }
 
 func TestBuildGrafanaValues_AdminPassword(t *testing.T) {

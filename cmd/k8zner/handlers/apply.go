@@ -33,8 +33,9 @@ const (
 	talosConfigPath = "talosconfig"
 	kubeconfigPath  = "kubeconfig"
 
-	// k8znerNamespace is the Kubernetes namespace for k8zner resources.
-	k8znerNamespace = "k8zner-system"
+	// k8znerNamespace is the Kubernetes namespace for k8zner resources,
+	// shared with the TUI layer so both look in the same place.
+	k8znerNamespace = tui.Namespace
 
 	// credentialsSecretName is the name of the secret containing Hetzner and Talos credentials.
 	credentialsSecretName = "k8zner-credentials" //nolint:gosec // This is a secret name, not a credential value

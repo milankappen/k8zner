@@ -10,7 +10,7 @@ import (
 
 // applyCertManager installs cert-manager for TLS certificate management.
 func applyCertManager(ctx context.Context, client k8sclient.Client, cfg *config.Config) error {
-	if err := ensureNamespace(ctx, client, "cert-manager", nil); err != nil {
+	if err := ensureNamespace(ctx, client, "cert-manager", withBaselinePodSecurity(nil)); err != nil {
 		return err
 	}
 
