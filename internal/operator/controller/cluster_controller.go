@@ -4,6 +4,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -16,9 +17,11 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
@@ -574,8 +577,39 @@ func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&k8znerv1alpha1.K8znerCluster{}).
-		Watches(&corev1.Node{}, &nodeEventHandler{client: mgr.GetClient()}).
+		Watches(&corev1.Node{}, &nodeEventHandler{client: mgr.GetClient()},
+			builder.WithPredicates(nodeChangePredicate())).
 		Complete(r)
+}
+
+// nodeChangePredicate filters node update events down to changes that can
+// affect reconciliation: readiness transitions, schedulability, labels, and
+// deletion. Without it, every kubelet heartbeat (one status update per node
+// every ~10s) re-enqueues the cluster and floods the workqueue.
+func nodeChangePredicate() predicate.Funcs {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldNode, okOld := e.ObjectOld.(*corev1.Node)
+			newNode, okNew := e.ObjectNew.(*corev1.Node)
+			if !okOld || !okNew {
+				return true
+			}
+			return nodeReadyStatus(oldNode) != nodeReadyStatus(newNode) ||
+				oldNode.Spec.Unschedulable != newNode.Spec.Unschedulable ||
+				oldNode.DeletionTimestamp.IsZero() != newNode.DeletionTimestamp.IsZero() ||
+				!maps.Equal(oldNode.Labels, newNode.Labels)
+		},
+	}
+}
+
+// nodeReadyStatus returns the status of the node's Ready condition.
+func nodeReadyStatus(node *corev1.Node) corev1.ConditionStatus {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			return cond.Status
+		}
+	}
+	return corev1.ConditionUnknown
 }
 
 // nodeEventHandler handles node events and triggers reconciliation.

@@ -33,8 +33,22 @@ credentials:
 podAnnotations: {}
 podLabels: {}
 
+# Priority class for the operator pods. The operator self-heals the cluster it
+# runs on, so consider "system-cluster-critical" to protect it from eviction
+# under node pressure. Empty means no priority class.
+priorityClassName: ""
+
+# Keep at least one operator replica available during voluntary disruptions
+# (node drains, upgrades). Only rendered when replicaCount > 1.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
 podSecurityContext:
   runAsNonRoot: true
+  # Group-own mounted volumes (the credentials secret) so the nonroot user
+  # can read them with a restrictive file mode.
+  fsGroup: 65532
   seccompProfile:
     type: RuntimeDefault
 

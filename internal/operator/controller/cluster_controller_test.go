@@ -411,6 +411,59 @@ func TestGenerateReplacementServerName(t *testing.T) {
 	})
 }
 
+func TestNodeChangePredicate(t *testing.T) {
+	t.Parallel()
+	pred := nodeChangePredicate()
+
+	readyNode := func() *corev1.Node { return createTestNode("node-1", false, true) }
+	notReadyNode := func() *corev1.Node { return createTestNode("node-1", false, false) }
+
+	update := func(oldNode, newNode *corev1.Node) event.UpdateEvent {
+		return event.UpdateEvent{ObjectOld: oldNode, ObjectNew: newNode}
+	}
+
+	t.Run("ignores heartbeat-only updates", func(t *testing.T) {
+		t.Parallel()
+		oldNode, newNode := readyNode(), readyNode()
+		newNode.Status.Conditions[0].LastHeartbeatTime = metav1.Now()
+		newNode.ResourceVersion = "2"
+		assert.False(t, pred.Update(update(oldNode, newNode)))
+	})
+
+	t.Run("enqueues on readiness transition", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, pred.Update(update(readyNode(), notReadyNode())))
+		assert.True(t, pred.Update(update(notReadyNode(), readyNode())))
+	})
+
+	t.Run("enqueues on unschedulable change", func(t *testing.T) {
+		t.Parallel()
+		cordoned := readyNode()
+		cordoned.Spec.Unschedulable = true
+		assert.True(t, pred.Update(update(readyNode(), cordoned)))
+	})
+
+	t.Run("enqueues on label change", func(t *testing.T) {
+		t.Parallel()
+		labeled := readyNode()
+		labeled.Labels = map[string]string{"node-role.kubernetes.io/control-plane": ""}
+		assert.True(t, pred.Update(update(readyNode(), labeled)))
+	})
+
+	t.Run("enqueues on deletion timestamp", func(t *testing.T) {
+		t.Parallel()
+		deleting := readyNode()
+		deleting.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		assert.True(t, pred.Update(update(readyNode(), deleting)))
+	})
+
+	t.Run("create and delete pass through", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, pred.Create(event.CreateEvent{Object: readyNode()}))
+		assert.True(t, pred.Delete(event.DeleteEvent{Object: readyNode()}))
+	})
+}
+
 func TestNodeEventHandler(t *testing.T) {
 	t.Parallel()
 	scheme := setupTestScheme(t)

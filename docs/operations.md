@@ -233,6 +233,17 @@ This removes all Hetzner Cloud resources (servers, networks, firewalls, load bal
 
 **Warning**: This is irreversible. Ensure you have backups if needed.
 
+### Why `kubectl delete k8znercluster` does not destroy infrastructure
+
+Deleting the `K8znerCluster` resource intentionally leaves all cloud
+infrastructure intact — there is no finalizer that tears down Hetzner
+resources. This is a deliberate design decision, not an omission: the
+operator runs *inside* the cluster it manages, so a finalizer-driven
+teardown would delete the servers the operator itself runs on partway
+through cleanup, reliably leaving half-deleted infrastructure behind with
+nothing left to finish the job. Always tear down clusters from outside
+with `k8zner destroy` (or the `cleanup` utility for orphaned resources).
+
 ## Talos Administration
 
 k8zner clusters run Talos Linux. Common Talos operations:

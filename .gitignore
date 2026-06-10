@@ -37,4 +37,4 @@ tests/e2e/access-data.yaml
 # Downloaded tools (at root only)
 /hcloud
 /hcloud-*.tar.gz
-*.tar.gz.*
+*.tar.gz.*/operator

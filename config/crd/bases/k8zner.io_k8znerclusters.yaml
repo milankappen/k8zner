@@ -62,6 +62,8 @@ spec:
                     description: |-
                       ArgoSubdomain overrides the default "argo" subdomain for ArgoCD ingress.
                       The full host will be "{argoSubdomain}.{domain}".
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
                     type: string
                   argocd:
                     description: ArgoCD for GitOps
@@ -77,6 +79,8 @@ spec:
                     description: |-
                       GrafanaSubdomain overrides the default "grafana" subdomain for Grafana ingress.
                       The full host will be "{grafanaSubdomain}.{domain}".
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
                     type: string
                   metricsServer:
                     default: true
@@ -163,7 +167,7 @@ spec:
                   size:
                     default: cx23
                     description: |-
-                      Size is the Hetzner server type (e.g., cx23, cx33, cpx21, cpx31)
+                      Size is the Hetzner server type (e.g., cx23, cx33, cpx22, cpx32)
                       CX types (dedicated vCPU) have consistent performance, CPX types (shared vCPU) have better availability
                     type: string
                 required:
@@ -171,8 +175,10 @@ spec:
                 - size
                 type: object
               credentialsRef:
-                description: CredentialsRef references the Secret containing HCloud
-                  token and Talos secrets
+                description: |-
+                  CredentialsRef references the Secret containing HCloud token and Talos secrets.
+                  Once set, it cannot be changed or removed: swapping credentials mid-lifecycle
+                  would silently re-point provisioning at a different Hetzner project.
                 properties:
                   name:
                     default: ""
@@ -185,10 +191,16 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+                x-kubernetes-validations:
+                - message: credentialsRef is immutable once set
+                  rule: '!has(oldSelf.name) || oldSelf.name == "" || (has(self.name)
+                    && self.name == oldSelf.name)'
               domain:
                 description: |-
                   Domain is the base domain for ingress resources (e.g., "example.com").
                   When set, addons like ArgoCD and Grafana will have ingress automatically configured.
+                maxLength: 253
+                pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$
                 type: string
               firewall:
                 description: Firewall configures the cluster firewall rules
@@ -271,6 +283,9 @@ spec:
                 - nbg1
                 - hel1
                 type: string
+                x-kubernetes-validations:
+                - message: region is immutable
+                  rule: self == oldSelf
               talos:
                 description: Talos specifies the Talos configuration
                 properties:
@@ -302,7 +317,7 @@ spec:
                   size:
                     default: cx23
                     description: |-
-                      Size is the Hetzner server type (e.g., cx23, cx33, cpx21, cpx31)
+                      Size is the Hetzner server type (e.g., cx23, cx33, cpx22, cpx32)
                       CX types (dedicated vCPU) have consistent performance, CPX types (shared vCPU) have better availability
                     type: string
                 required:
@@ -496,8 +511,8 @@ spec:
                       description: NodeStatus represents the status of a single node.
                       properties:
                         healthy:
-                          description: Healthy indicates if the node is healthy (deprecated,
-                            use Phase)
+                          description: Healthy indicates if the node is healthy (derived
+                            from Phase == NodePhaseReady)
                           type: boolean
                         lastHealthCheck:
                           description: LastHealthCheck is when health was last checked
@@ -724,8 +739,8 @@ spec:
                       description: NodeStatus represents the status of a single node.
                       properties:
                         healthy:
-                          description: Healthy indicates if the node is healthy (deprecated,
-                            use Phase)
+                          description: Healthy indicates if the node is healthy (derived
+                            from Phase == NodePhaseReady)
                           type: boolean
                         lastHealthCheck:
                           description: LastHealthCheck is when health was last checked

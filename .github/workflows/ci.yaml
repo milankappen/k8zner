@@ -43,9 +43,9 @@ jobs:
           version: v2.11.4
           args: --timeout=5m
 
-      - name: Check CRD and operator chart copies are in sync
+      - name: Check generated manifests and chart copies are in sync
         run: |
-          make check-crds
+          make check-manifests
           make check-operator-chart
 
   # ==========================================================================

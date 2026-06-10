@@ -3,8 +3,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
+
+	"go.uber.org/zap/zapcore"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -31,24 +34,69 @@ func init() {
 	utilruntime.Must(k8znerv1alpha1.AddToScheme(scheme))
 }
 
+// loadHCloudToken reads the Hetzner Cloud API token from the file named by
+// HCLOUD_TOKEN_FILE (preferred: a mounted Secret volume keeps the token out of
+// the pod's environment and `kubectl describe` output), falling back to the
+// HCLOUD_TOKEN environment variable. Whitespace is trimmed because secrets
+// created with `kubectl create secret --from-file` often carry a trailing
+// newline, which would make every Hetzner API call fail with 401.
+func loadHCloudToken() (string, error) {
+	if path := os.Getenv("HCLOUD_TOKEN_FILE"); path != "" {
+		data, err := os.ReadFile(path) // #nosec G304 -- path is operator config, not user input
+		if err != nil {
+			return "", fmt.Errorf("failed to read HCLOUD_TOKEN_FILE: %w", err)
+		}
+		token := strings.TrimSpace(string(data))
+		if token == "" {
+			return "", fmt.Errorf("token file %s is empty", path)
+		}
+		return token, nil
+	}
+
+	token := strings.TrimSpace(os.Getenv("HCLOUD_TOKEN"))
+	if token == "" {
+		return "", fmt.Errorf("either HCLOUD_TOKEN_FILE or HCLOUD_TOKEN must be set")
+	}
+	return token, nil
+}
+
 func main() {
 	var (
 		metricsAddr          string
 		probeAddr            string
 		enableLeaderElection bool
 		leaderElectionID     string
+		logLevel             string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "Enable leader election for controller manager.")
 	flag.StringVar(&leaderElectionID, "leader-election-id", "k8zner-operator", "The name of the leader election resource.")
+	flag.StringVar(&logLevel, "log-level", "info", "Log verbosity: debug, info, or error.")
 
-	opts := zap.Options{
-		Development: os.Getenv("DEBUG") == "true",
+	// DEBUG=true is the legacy switch, kept so existing deployments don't
+	// silently lose debug output when upgrading.
+	if os.Getenv("DEBUG") == "true" {
+		logLevel = "debug"
 	}
+
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	switch logLevel {
+	case "debug":
+		opts.Development = true
+		opts.Level = zapcore.DebugLevel
+	case "info":
+		opts.Level = zapcore.InfoLevel
+	case "error":
+		opts.Level = zapcore.ErrorLevel
+	default:
+		setupLog.Error(nil, "invalid --log-level, must be debug, info, or error", "value", logLevel)
+		os.Exit(1)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -72,12 +120,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get credentials from environment or secrets. Trim whitespace because
-	// secrets created with `kubectl create secret --from-file` often carry a
-	// trailing newline, which would make every Hetzner API call fail with 401.
-	hcloudToken := strings.TrimSpace(os.Getenv("HCLOUD_TOKEN"))
-	if hcloudToken == "" {
-		setupLog.Error(nil, "HCLOUD_TOKEN environment variable is required")
+	hcloudToken, err := loadHCloudToken()
+	if err != nil {
+		setupLog.Error(err, "unable to load Hetzner Cloud token")
 		os.Exit(1)
 	}
 
