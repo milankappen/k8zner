@@ -110,6 +110,7 @@ func (r *ClusterReconciler) installAndWaitForCNI(ctx context.Context, cluster *k
 		Installed:          true,
 		Healthy:            true,
 		Phase:              k8znerv1alpha1.AddonPhaseInstalled,
+		Version:            addons.CNIVersion(cfg),
 		LastTransitionTime: &readyNow,
 		InstallOrder:       k8znerv1alpha1.AddonOrderCilium,
 		StartedAt:          &ciliumStart,
@@ -186,38 +187,44 @@ func (r *ClusterReconciler) reconcileAddonsPhase(ctx context.Context, cluster *k
 		return result, nil
 	}
 
-	creds, err := r.phaseAdapter.LoadCredentials(ctx, cluster)
+	cfg, kubeconfig, networkID, err := r.prepareAddonInputs(ctx, cluster)
 	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonCredentialsError, "Failed to load credentials")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-
-	cfg, err := operatorprov.SpecToConfig(cluster, creds)
-	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to convert spec to config")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-	cfg.HCloudToken = creds.HCloudToken
-
-	kubeconfig, err := r.getKubeconfigFromTalos(ctx, cluster, creds)
-	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to get kubeconfig")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-
-	networkID, err := r.resolveNetworkID(ctx, cluster)
-	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to resolve network ID")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-
-	if cfg.HCloudToken == "" {
-		err := fmt.Errorf("HCloud token is empty")
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "CCM/CSI addons require valid credentials")
+		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to prepare addon installation")
 		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
 	}
 
 	return r.installNextAddon(ctx, cluster, cfg, kubeconfig, networkID)
+}
+
+// prepareAddonInputs assembles everything addon installation needs:
+// the expanded config (with credentials), a kubeconfig for the managed
+// cluster, and the HCloud network ID.
+func (r *ClusterReconciler) prepareAddonInputs(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster) (*config.Config, []byte, int64, error) {
+	creds, err := r.phaseAdapter.LoadCredentials(ctx, cluster)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to load credentials: %w", err)
+	}
+
+	cfg, err := operatorprov.SpecToConfig(cluster, creds)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to convert spec to config: %w", err)
+	}
+	cfg.HCloudToken = creds.HCloudToken
+	if cfg.HCloudToken == "" {
+		return nil, nil, 0, fmt.Errorf("HCloud token is empty")
+	}
+
+	kubeconfig, err := r.getKubeconfigFromTalos(ctx, cluster, creds)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to get kubeconfig: %w", err)
+	}
+
+	networkID, err := r.resolveNetworkID(ctx, cluster)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to resolve network ID: %w", err)
+	}
+
+	return cfg, kubeconfig, networkID, nil
 }
 
 // ensureWorkersReady checks if workers are ready, creating them if needed.
@@ -294,7 +301,7 @@ func (r *ClusterReconciler) installNextAddon(ctx context.Context, cluster *k8zne
 
 		installStart := metav1.Now()
 
-		if err := addons.InstallStep(ctx, step.Name, cfg, kubeconfig, networkID); err != nil {
+		if err := r.addonInstaller(ctx, step.Name, cfg, kubeconfig, networkID); err != nil {
 			r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed,
 				fmt.Sprintf("Failed to install addon: %s", step.Name))
 			recordPhaseError(cluster, step.Name, err.Error())
@@ -326,6 +333,7 @@ func (r *ClusterReconciler) installNextAddon(ctx context.Context, cluster *k8zne
 			Installed:          true,
 			Healthy:            true,
 			Phase:              k8znerv1alpha1.AddonPhaseInstalled,
+			Version:            step.Version,
 			LastTransitionTime: &now,
 			InstallOrder:       step.Order,
 			StartedAt:          &installStart,

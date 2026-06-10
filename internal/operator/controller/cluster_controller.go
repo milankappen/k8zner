@@ -25,6 +25,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
+	"github.com/milankappen/k8zner/internal/addons"
+	"github.com/milankappen/k8zner/internal/config"
 	operatorprov "github.com/milankappen/k8zner/internal/operator/provisioning"
 	"github.com/milankappen/k8zner/internal/platform/hcloud"
 )
@@ -113,6 +115,10 @@ type ClusterReconciler struct {
 	// Defaults to waitForK8sNodeReady. Can be overridden in tests.
 	nodeReadyWaiter func(ctx context.Context, nodeName string, timeout time.Duration) error
 
+	// addonInstaller installs or upgrades a single addon step.
+	// Defaults to addons.InstallStep. Can be overridden in tests.
+	addonInstaller func(ctx context.Context, stepName string, cfg *config.Config, kubeconfig []byte, networkID int64) error
+
 	// Provisioning adapter for operator-driven provisioning.
 	phaseAdapter *operatorprov.PhaseAdapter
 
@@ -186,6 +192,14 @@ func WithNodeReadyWaiter(waiter func(ctx context.Context, nodeName string, timeo
 	}
 }
 
+// WithAddonInstaller sets a custom addon install function.
+// This is primarily used for testing to avoid installing real addons.
+func WithAddonInstaller(installer func(ctx context.Context, stepName string, cfg *config.Config, kubeconfig []byte, networkID int64) error) Option {
+	return func(r *ClusterReconciler) {
+		r.addonInstaller = installer
+	}
+}
+
 // NewClusterReconciler creates a new ClusterReconciler with the given options.
 func NewClusterReconciler(c client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, opts ...Option) *ClusterReconciler {
 	r := &ClusterReconciler{
@@ -204,6 +218,11 @@ func NewClusterReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 	// Set default nodeReadyWaiter if not overridden
 	if r.nodeReadyWaiter == nil {
 		r.nodeReadyWaiter = r.waitForK8sNodeReady
+	}
+
+	// Set default addonInstaller if not overridden
+	if r.addonInstaller == nil {
+		r.addonInstaller = addons.InstallStep
 	}
 
 	return r
