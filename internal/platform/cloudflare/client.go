@@ -7,9 +7,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const baseURL = "https://api.cloudflare.com/client/v4"
+
+// requestTimeout bounds each Cloudflare API call so a degraded network
+// cannot hang DNS reconciliation indefinitely.
+const requestTimeout = 30 * time.Second
 
 // Client is a minimal Cloudflare API client for DNS record management.
 type Client struct {
@@ -56,7 +61,7 @@ type listResponse struct {
 func NewClient(apiToken string) *Client {
 	return &Client{
 		apiToken:   apiToken,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: requestTimeout},
 	}
 }
 

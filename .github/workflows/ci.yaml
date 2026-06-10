@@ -43,6 +43,11 @@ jobs:
           version: v2.11.4
           args: --timeout=5m
 
+      - name: Check CRD and operator chart copies are in sync
+        run: |
+          make check-crds
+          make check-operator-chart
+
   # ==========================================================================
   # Security scanning
   # ==========================================================================
@@ -67,7 +72,7 @@ jobs:
           govulncheck ./...
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: 'fs'
           scan-ref: '.'

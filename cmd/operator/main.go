@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -71,8 +72,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get credentials from environment or secrets
-	hcloudToken := os.Getenv("HCLOUD_TOKEN")
+	// Get credentials from environment or secrets. Trim whitespace because
+	// secrets created with `kubectl create secret --from-file` often carry a
+	// trailing newline, which would make every Hetzner API call fail with 401.
+	hcloudToken := strings.TrimSpace(os.Getenv("HCLOUD_TOKEN"))
 	if hcloudToken == "" {
 		setupLog.Error(nil, "HCLOUD_TOKEN environment variable is required")
 		os.Exit(1)

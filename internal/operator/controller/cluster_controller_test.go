@@ -142,6 +142,40 @@ func TestClusterReconciler_Reconcile(t *testing.T) {
 		assert.Equal(t, ctrl.Result{}, result)
 	})
 
+	t.Run("deleting cluster skips reconciliation", func(t *testing.T) {
+		t.Parallel()
+		scheme := setupTestScheme(t)
+		cluster := &k8znerv1alpha1.K8znerCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "test-cluster",
+				Namespace:         "default",
+				DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				Finalizers:        []string{"test.k8zner.io/keep"},
+			},
+		}
+
+		client := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			WithStatusSubresource(cluster).
+			Build()
+		recorder := record.NewFakeRecorder(10)
+
+		r := NewClusterReconciler(client, scheme, recorder,
+			WithHCloudClient(&MockHCloudClient{}),
+		)
+
+		result, err := r.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: "default",
+				Name:      "test-cluster",
+			},
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+	})
+
 	t.Run("paused cluster skips reconciliation", func(t *testing.T) {
 		t.Parallel()
 		scheme := setupTestScheme(t)
@@ -379,7 +413,30 @@ func TestGenerateReplacementServerName(t *testing.T) {
 
 func TestNodeEventHandler(t *testing.T) {
 	t.Parallel()
-	h := &nodeEventHandler{}
+	scheme := setupTestScheme(t)
+
+	newCluster := func(namespace, name string) *k8znerv1alpha1.K8znerCluster {
+		return &k8znerv1alpha1.K8znerCluster{
+			ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		}
+	}
+
+	h := &nodeEventHandler{
+		client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(newCluster("k8zner-system", "my-cluster")).
+			Build(),
+	}
+
+	expectEnqueued := func(t *testing.T, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+		t.Helper()
+		assert.Equal(t, 1, q.Len())
+
+		item, _ := q.Get()
+		assert.Equal(t, "k8zner-system", item.Namespace)
+		assert.Equal(t, "my-cluster", item.Name)
+		q.Done(item)
+	}
 
 	t.Run("Create enqueues cluster", func(t *testing.T) {
 		t.Parallel()
@@ -387,12 +444,7 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Create(context.Background(), event.CreateEvent{}, q)
-		assert.Equal(t, 1, q.Len())
-
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+		expectEnqueued(t, q)
 	})
 
 	t.Run("Update enqueues cluster", func(t *testing.T) {
@@ -401,12 +453,7 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Update(context.Background(), event.UpdateEvent{}, q)
-		assert.Equal(t, 1, q.Len())
-
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+		expectEnqueued(t, q)
 	})
 
 	t.Run("Delete enqueues cluster", func(t *testing.T) {
@@ -415,12 +462,7 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Delete(context.Background(), event.DeleteEvent{}, q)
-		assert.Equal(t, 1, q.Len())
-
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+		expectEnqueued(t, q)
 	})
 
 	t.Run("Generic enqueues cluster", func(t *testing.T) {
@@ -429,12 +471,26 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Generic(context.Background(), event.GenericEvent{}, q)
-		assert.Equal(t, 1, q.Len())
+		expectEnqueued(t, q)
+	})
 
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+	t.Run("enqueues every cluster across namespaces", func(t *testing.T) {
+		t.Parallel()
+		multi := &nodeEventHandler{
+			client: fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(
+					newCluster("k8zner-system", "cluster-a"),
+					newCluster("other-ns", "cluster-b"),
+				).
+				Build(),
+		}
+
+		q := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+		defer q.ShutDown()
+
+		multi.Create(context.Background(), event.CreateEvent{}, q)
+		assert.Equal(t, 2, q.Len())
 	})
 }
 
