@@ -166,6 +166,11 @@ type CertManagerCloudflareConfig struct {
 	// Production uses Let's Encrypt production server (default: false = staging).
 	// Set to true only after testing with staging to avoid rate limits.
 	Production bool `mapstructure:"production" yaml:"production"`
+
+	// WildcardCertificate additionally issues a "*.{domain}" certificate and
+	// sets it as the Traefik default, so ingresses without an explicit TLS
+	// secret are covered without per-host certificates.
+	WildcardCertificate bool `mapstructure:"wildcard_certificate" yaml:"wildcard_certificate"`
 }
 
 // TraefikConfig defines the Traefik Proxy ingress controller configuration.

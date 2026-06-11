@@ -1,6 +1,7 @@
 package addons
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -162,4 +163,56 @@ func TestClusterIssuerData_Fields(t *testing.T) {
 	assert.Equal(t, "test-secret", data.SecretName)
 	assert.Equal(t, "api-token", data.SecretKey)
 	assert.True(t, data.Production)
+}
+
+func TestBuildWildcardCertManifest(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := buildWildcardCertManifest("example.com", "letsencrypt-cloudflare-production")
+	require.NoError(t, err)
+
+	docs := strings.Split(string(manifest), "\n---\n")
+	require.Len(t, docs, 2, "expected Certificate and TLSStore documents")
+
+	var cert map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(docs[0]), &cert))
+	assert.Equal(t, "cert-manager.io/v1", cert["apiVersion"])
+	assert.Equal(t, "Certificate", cert["kind"])
+
+	certMeta := cert["metadata"].(map[string]any)
+	assert.Equal(t, "wildcard-example-com", certMeta["name"])
+	assert.Equal(t, "traefik", certMeta["namespace"])
+
+	certSpec := cert["spec"].(map[string]any)
+	assert.Equal(t, "wildcard-tls", certSpec["secretName"])
+	assert.ElementsMatch(t, []any{"*.example.com", "example.com"}, certSpec["dnsNames"])
+	issuerRef := certSpec["issuerRef"].(map[string]any)
+	assert.Equal(t, "letsencrypt-cloudflare-production", issuerRef["name"])
+	assert.Equal(t, "ClusterIssuer", issuerRef["kind"])
+
+	var store map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(docs[1]), &store))
+	assert.Equal(t, "traefik.io/v1alpha1", store["apiVersion"])
+	assert.Equal(t, "TLSStore", store["kind"])
+
+	storeMeta := store["metadata"].(map[string]any)
+	assert.Equal(t, "default", storeMeta["name"])
+	assert.Equal(t, "traefik", storeMeta["namespace"])
+
+	storeSpec := store["spec"].(map[string]any)
+	defaultCert := storeSpec["defaultCertificate"].(map[string]any)
+	assert.Equal(t, "wildcard-tls", defaultCert["secretName"])
+}
+
+func TestBuildWildcardCertManifest_SanitizesDomain(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := buildWildcardCertManifest("apps.my-domain.co.uk", "letsencrypt-cloudflare-staging")
+	require.NoError(t, err)
+
+	var cert map[string]any
+	docs := strings.Split(string(manifest), "\n---\n")
+	require.NoError(t, yaml.Unmarshal([]byte(docs[0]), &cert))
+	certMeta := cert["metadata"].(map[string]any)
+	assert.Equal(t, "wildcard-apps-my-domain-co-uk", certMeta["name"])
 }

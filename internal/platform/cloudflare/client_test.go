@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/milankappen/k8zner/internal/platform/dns"
 )
 
 func TestGetZoneID(t *testing.T) {
@@ -185,3 +187,6 @@ func split(s string, sep byte) []string {
 	result = append(result, s[start:])
 	return result
 }
+
+// Client must satisfy the provider-neutral DNS interface.
+var _ dns.Provider = (*Client)(nil)

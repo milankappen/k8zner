@@ -780,3 +780,59 @@ func TestExpandSpec_MonitoringCustomGrafanaSubdomain(t *testing.T) {
 			expanded.Addons.KubePrometheusStack.Grafana.IngressHost)
 	}
 }
+
+func TestExpandSpec_WildcardCertificate(t *testing.T) {
+	t.Parallel()
+
+	base := func() *Spec {
+		return &Spec{
+			Name:    "test",
+			Region:  RegionFalkenstein,
+			Mode:    ModeDev,
+			Workers: WorkerSpec{Count: 1, Size: SizeCX22},
+		}
+	}
+
+	t.Run("disabled by default even with domain", func(t *testing.T) {
+		t.Parallel()
+		spec := base()
+		spec.Domain = "example.com"
+
+		expanded, err := ExpandSpec(spec)
+		if err != nil {
+			t.Fatalf("ExpandSpec failed: %v", err)
+		}
+		if expanded.Addons.CertManager.Cloudflare.WildcardCertificate {
+			t.Error("wildcard certificate should be opt-in")
+		}
+	})
+
+	t.Run("enabled with domain", func(t *testing.T) {
+		t.Parallel()
+		spec := base()
+		spec.Domain = "example.com"
+		spec.WildcardCertificate = true
+
+		expanded, err := ExpandSpec(spec)
+		if err != nil {
+			t.Fatalf("ExpandSpec failed: %v", err)
+		}
+		if !expanded.Addons.CertManager.Cloudflare.WildcardCertificate {
+			t.Error("wildcard certificate should be enabled when requested with a domain")
+		}
+	})
+
+	t.Run("ignored without domain", func(t *testing.T) {
+		t.Parallel()
+		spec := base()
+		spec.WildcardCertificate = true
+
+		expanded, err := ExpandSpec(spec)
+		if err != nil {
+			t.Fatalf("ExpandSpec failed: %v", err)
+		}
+		if expanded.Addons.CertManager.Cloudflare.WildcardCertificate {
+			t.Error("wildcard needs a domain for DNS01")
+		}
+	})
+}

@@ -177,9 +177,10 @@ func expandAddons(cfg *Spec, vm VersionMatrix) AddonsConfig {
 		CertManager: CertManagerConfig{
 			Enabled: true,
 			Cloudflare: CertManagerCloudflareConfig{
-				Enabled:    hasDomain,
-				Email:      cfg.GetCertEmail(),
-				Production: true, // Use production Let's Encrypt
+				Enabled:             hasDomain,
+				Email:               cfg.GetCertEmail(),
+				Production:          true, // Use production Let's Encrypt
+				WildcardCertificate: hasDomain && cfg.WildcardCertificate,
 			},
 		},
 

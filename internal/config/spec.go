@@ -35,6 +35,11 @@ type Spec struct {
 	// Requires CF_API_TOKEN environment variable.
 	Domain string `yaml:"domain,omitempty"`
 
+	// WildcardCertificate additionally issues a "*.{domain}" certificate via
+	// DNS01 and sets it as Traefik's default, so ingresses without an
+	// explicit TLS secret are covered. Only used when Domain is set.
+	WildcardCertificate bool `yaml:"wildcard_certificate,omitempty"`
+
 	// ArgoSubdomain is the subdomain for ArgoCD dashboard (default: "argo").
 	// When Domain is set, ArgoCD will be accessible at {ArgoSubdomain}.{Domain}.
 	// Example: with Domain="example.com" and ArgoSubdomain="argo", ArgoCD is at argo.example.com

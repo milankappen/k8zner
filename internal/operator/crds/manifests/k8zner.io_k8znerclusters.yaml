@@ -94,6 +94,12 @@ spec:
                     default: true
                     description: Traefik ingress controller
                     type: boolean
+                  wildcardCertificate:
+                    description: |-
+                      WildcardCertificate additionally issues a "*.{domain}" certificate via
+                      DNS01 and sets it as Traefik's default certificate, so ingresses
+                      without an explicit TLS secret are covered. Requires domain.
+                    type: boolean
                 type: object
               backup:
                 description: Backup configures automated etcd backups

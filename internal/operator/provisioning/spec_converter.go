@@ -155,9 +155,10 @@ func configureCloudflare(cfg *config.Config, spec *k8znerv1alpha1.K8znerClusterS
 	// Enable CertManager Cloudflare integration for DNS-01 challenge
 	if cfg.Addons.CertManager.Enabled && spec.Domain != "" {
 		cfg.Addons.CertManager.Cloudflare = config.CertManagerCloudflareConfig{
-			Enabled:    true,
-			Production: true,
-			Email:      "admin@" + spec.Domain,
+			Enabled:             true,
+			Production:          true,
+			Email:               "admin@" + spec.Domain,
+			WildcardCertificate: spec.Addons != nil && spec.Addons.WildcardCertificate,
 		}
 	}
 }

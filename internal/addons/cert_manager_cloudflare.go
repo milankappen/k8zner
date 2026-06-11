@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"text/template"
 	"time"
 
@@ -55,6 +56,30 @@ func applyCertManagerCloudflare(ctx context.Context, client k8sclient.Client, cf
 		}
 	} else {
 		log.Println("Skipping production ClusterIssuer (no email provided - staging certificates only)")
+	}
+
+	// Wildcard certificate: one DNS01 cert for the whole domain, set as
+	// Traefik's default so ingresses without an explicit TLS secret are
+	// covered. Existing ingresses that name their own secret are unaffected.
+	if cfCfg.WildcardCertificate && cfg.Addons.Cloudflare.Domain != "" {
+		issuerName := "letsencrypt-cloudflare-staging"
+		if cfCfg.Email != "" {
+			issuerName = "letsencrypt-cloudflare-production"
+		}
+
+		manifest, err := buildWildcardCertManifest(cfg.Addons.Cloudflare.Domain, issuerName)
+		if err != nil {
+			return fmt.Errorf("failed to build wildcard certificate manifest: %w", err)
+		}
+
+		// cert-manager installs before traefik, so the namespace may not exist yet.
+		if err := ensureNamespace(ctx, client, "traefik", baselinePodSecurityLabels); err != nil {
+			return err
+		}
+		if err := applyManifests(ctx, client, "wildcard-certificate", manifest); err != nil {
+			return fmt.Errorf("failed to apply wildcard certificate: %w", err)
+		}
+		log.Printf("Wildcard certificate for *.%s requested via %s", cfg.Addons.Cloudflare.Domain, issuerName)
 	}
 
 	return nil
@@ -236,4 +261,62 @@ spec:
           apiTokenSecretRef:
             name: {{ .SecretName }}
             key: {{ .SecretKey }}
+`
+
+// buildWildcardCertManifest renders a cert-manager Certificate for
+// "*.{domain}" plus a Traefik TLSStore making it the default certificate.
+func buildWildcardCertManifest(domain, issuerName string) ([]byte, error) {
+	data := wildcardCertData{
+		Name:       "wildcard-" + strings.ReplaceAll(domain, ".", "-"),
+		Domain:     domain,
+		IssuerName: issuerName,
+		SecretName: "wildcard-tls",
+		Namespace:  "traefik",
+	}
+
+	tmpl, err := template.New("wildcardcert").Parse(wildcardCertTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse wildcard certificate template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("failed to execute wildcard certificate template: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// wildcardCertData holds the data for rendering the wildcard certificate template.
+type wildcardCertData struct {
+	Name       string
+	Domain     string
+	IssuerName string
+	SecretName string
+	Namespace  string
+}
+
+// wildcardCertTemplate renders the Certificate and the Traefik default TLSStore.
+const wildcardCertTemplate = `apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  secretName: {{ .SecretName }}
+  dnsNames:
+    - "*.{{ .Domain }}"
+    - "{{ .Domain }}"
+  issuerRef:
+    name: {{ .IssuerName }}
+    kind: ClusterIssuer
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: {{ .Namespace }}
+spec:
+  defaultCertificate:
+    secretName: {{ .SecretName }}
 `

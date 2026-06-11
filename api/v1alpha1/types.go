@@ -272,6 +272,12 @@ type AddonSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
 	GrafanaSubdomain string `json:"grafanaSubdomain,omitempty"`
+
+	// WildcardCertificate additionally issues a "*.{domain}" certificate via
+	// DNS01 and sets it as Traefik's default certificate, so ingresses
+	// without an explicit TLS secret are covered. Requires domain.
+	// +optional
+	WildcardCertificate bool `json:"wildcardCertificate,omitempty"`
 }
 
 // K8znerClusterStatus defines the observed state of K8znerCluster.
