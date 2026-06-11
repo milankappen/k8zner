@@ -200,31 +200,54 @@ func (r *ClusterReconciler) reconcileAddonsPhase(ctx context.Context, cluster *k
 // the expanded config (with credentials), a kubeconfig for the managed
 // cluster, and the HCloud network ID.
 func (r *ClusterReconciler) prepareAddonInputs(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster) (*config.Config, []byte, int64, error) {
+	cfg, creds, err := r.addonConfig(ctx, cluster)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	kubeconfig, networkID, err := r.addonClusterAccess(ctx, cluster, creds)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	return cfg, kubeconfig, networkID, nil
+}
+
+// addonConfig loads credentials and expands the CRD spec into the internal
+// config. Cheap: the secret read is served from the controller cache.
+func (r *ClusterReconciler) addonConfig(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster) (*config.Config, *operatorprov.Credentials, error) {
 	creds, err := r.phaseAdapter.LoadCredentials(ctx, cluster)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to load credentials: %w", err)
+		return nil, nil, fmt.Errorf("failed to load credentials: %w", err)
 	}
 
 	cfg, err := operatorprov.SpecToConfig(cluster, creds)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to convert spec to config: %w", err)
+		return nil, nil, fmt.Errorf("failed to convert spec to config: %w", err)
 	}
 	cfg.HCloudToken = creds.HCloudToken
 	if cfg.HCloudToken == "" {
-		return nil, nil, 0, fmt.Errorf("HCloud token is empty")
+		return nil, nil, fmt.Errorf("HCloud token is empty")
 	}
 
+	return cfg, creds, nil
+}
+
+// addonClusterAccess fetches what is needed to reach the managed cluster: a
+// kubeconfig (a Talos API round-trip) and the HCloud network ID. Expensive —
+// callers should establish there is work to do before calling it.
+func (r *ClusterReconciler) addonClusterAccess(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster, creds *operatorprov.Credentials) ([]byte, int64, error) {
 	kubeconfig, err := r.getKubeconfigFromTalos(ctx, cluster, creds)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to get kubeconfig: %w", err)
+		return nil, 0, fmt.Errorf("failed to get kubeconfig: %w", err)
 	}
 
 	networkID, err := r.resolveNetworkID(ctx, cluster)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to resolve network ID: %w", err)
+		return nil, 0, fmt.Errorf("failed to resolve network ID: %w", err)
 	}
 
-	return cfg, kubeconfig, networkID, nil
+	return kubeconfig, networkID, nil
 }
 
 // ensureWorkersReady checks if workers are ready, creating them if needed.

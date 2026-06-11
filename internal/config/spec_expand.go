@@ -224,7 +224,7 @@ func expandAddons(cfg *Spec, vm VersionMatrix) AddonsConfig {
 		// Logging (Loki + Alloy) - enabled only when logging is set
 		Logging: LoggingConfig{
 			Enabled:   cfg.Logging,
-			Retention: "168h",
+			Retention: LoggingDefaultRetention,
 		},
 	}
 }

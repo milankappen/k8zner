@@ -118,7 +118,7 @@ func buildAddonsConfig(spec *k8znerv1alpha1.K8znerClusterSpec) config.AddonsConf
 		KubePrometheusStack: expandMonitoringFromSpec(spec),
 		Logging: config.LoggingConfig{
 			Enabled:   spec.Addons != nil && spec.Addons.Logging,
-			Retention: "168h",
+			Retention: config.LoggingDefaultRetention,
 		},
 	}
 }

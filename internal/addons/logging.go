@@ -10,10 +10,6 @@ import (
 	"github.com/milankappen/k8zner/internal/config"
 )
 
-// defaultLogRetention bounds how long Loki keeps logs when the user does not
-// configure a retention period.
-const defaultLogRetention = "168h"
-
 // lokiEndpoint is the in-cluster push/query URL for the Loki single binary.
 const lokiEndpoint = "http://loki.logging.svc.cluster.local:3100"
 
@@ -58,7 +54,7 @@ func logRetention(cfg *config.Config) string {
 	if r := cfg.Addons.Logging.Retention; r != "" {
 		return r
 	}
-	return defaultLogRetention
+	return config.LoggingDefaultRetention
 }
 
 // buildLokiValues renders helm values for a single-binary Loki suited to the

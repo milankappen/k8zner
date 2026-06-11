@@ -56,7 +56,7 @@ func TestBuildLokiValues_RetentionDefault(t *testing.T) {
 
 	values := buildLokiValues(cfg)
 	limits := values["loki"].(helm.Values)["limits_config"].(helm.Values)
-	assert.Equal(t, defaultLogRetention, limits["retention_period"])
+	assert.Equal(t, config.LoggingDefaultRetention, limits["retention_period"])
 }
 
 func TestBuildAlloyValues(t *testing.T) {

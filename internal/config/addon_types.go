@@ -174,6 +174,11 @@ type CertManagerCloudflareConfig struct {
 	WildcardCertificate bool `mapstructure:"wildcard_certificate" yaml:"wildcard_certificate"`
 }
 
+// LoggingDefaultRetention is how long Loki keeps logs unless overridden.
+// Both expansion paths (CLI spec and operator CRD) and the addon installer
+// reference this single constant.
+const LoggingDefaultRetention = "168h"
+
 // LoggingConfig defines the Loki + Alloy log aggregation stack.
 // Loki runs as a single binary with persistent filesystem storage; Alloy
 // tails pod logs via the Kubernetes API and pushes them to Loki.

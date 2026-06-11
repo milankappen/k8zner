@@ -41,14 +41,31 @@ func (r *ClusterReconciler) reconcileAddonUpgrades(ctx context.Context, cluster 
 		return ctrl.Result{}, false
 	}
 
-	cfg, kubeconfig, networkID, err := r.prepareAddonInputs(ctx, cluster)
+	cfg, creds, err := r.addonConfig(ctx, cluster)
 	if err != nil {
 		// Non-fatal: upgrades are retried on the next periodic reconcile.
 		logger.V(1).Info("skipping addon upgrade check", "reason", err.Error())
 		return ctrl.Result{}, false
 	}
 
-	return r.applyAddonPlan(ctx, cluster, addons.EnabledSteps(cfg), cfg, kubeconfig, networkID)
+	steps := addons.EnabledSteps(cfg)
+
+	// In the common steady state everything is converged, and version
+	// backfills only mutate status. Fetching cluster access dials the Talos
+	// API, so only pay for it when an install or upgrade is actually due.
+	var kubeconfig []byte
+	var networkID int64
+	if backfills, next := planAddonReconcile(steps, cluster.Status.Addons); next != nil {
+		kubeconfig, networkID, err = r.addonClusterAccess(ctx, cluster, creds)
+		if err != nil {
+			logger.V(1).Info("skipping addon upgrade check", "reason", err.Error())
+			return ctrl.Result{}, false
+		}
+	} else if len(backfills) == 0 {
+		return ctrl.Result{}, false
+	}
+
+	return r.applyAddonPlan(ctx, cluster, steps, cfg, kubeconfig, networkID)
 }
 
 // clusterStableForUpgrades reports whether all desired nodes are ready.

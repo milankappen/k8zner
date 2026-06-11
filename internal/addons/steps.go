@@ -35,19 +35,26 @@ type AddonStep struct {
 	Version string
 }
 
-// stepChartNames maps step names to their helm chart registry keys.
-var stepChartNames = map[string]string{
-	StepCCM:           "hcloud-ccm",
-	StepCSI:           "hcloud-csi",
-	StepMetricsServer: "metrics-server",
-	StepCertManager:   "cert-manager",
-	StepTraefik:       "traefik",
-	StepExternalDNS:   "external-dns",
-	StepArgoCD:        "argo-cd",
-	StepMonitoring:    "kube-prometheus-stack",
+// stepChart describes how a chart-backed step resolves its desired version:
+// the helm registry key plus the user-supplied overrides from config.
+// talos-backup is the one non-chart step and is handled in stepVersion.
+type stepChart struct {
+	chartName string
+	helm      func(*config.Config) config.HelmChartConfig
+}
+
+var stepCharts = map[string]stepChart{
+	StepCCM:           {"hcloud-ccm", func(c *config.Config) config.HelmChartConfig { return c.Addons.CCM.Helm }},
+	StepCSI:           {"hcloud-csi", func(c *config.Config) config.HelmChartConfig { return c.Addons.CSI.Helm }},
+	StepMetricsServer: {"metrics-server", func(c *config.Config) config.HelmChartConfig { return c.Addons.MetricsServer.Helm }},
+	StepCertManager:   {"cert-manager", func(c *config.Config) config.HelmChartConfig { return c.Addons.CertManager.Helm }},
+	StepTraefik:       {"traefik", func(c *config.Config) config.HelmChartConfig { return c.Addons.Traefik.Helm }},
+	StepExternalDNS:   {"external-dns", func(c *config.Config) config.HelmChartConfig { return c.Addons.ExternalDNS.Helm }},
+	StepArgoCD:        {"argo-cd", func(c *config.Config) config.HelmChartConfig { return c.Addons.ArgoCD.Helm }},
+	StepMonitoring:    {"kube-prometheus-stack", func(c *config.Config) config.HelmChartConfig { return c.Addons.KubePrometheusStack.Helm }},
 	// The logging step installs Loki and Alloy; the Loki chart version is
 	// what gets tracked for upgrades.
-	StepLogging: "loki",
+	StepLogging: {"loki", func(c *config.Config) config.HelmChartConfig { return c.Addons.Logging.LokiHelm }},
 }
 
 // stepVersion returns the desired version for a step: the resolved helm chart
@@ -59,33 +66,11 @@ func stepVersion(name string, cfg *config.Config) string {
 		}
 		return talosBackupVersion()
 	}
-	return helm.GetChartSpec(stepChartNames[name], stepHelmConfig(name, cfg)).Version
-}
-
-// stepHelmConfig returns the user-supplied helm overrides for a step.
-func stepHelmConfig(name string, cfg *config.Config) config.HelmChartConfig {
-	switch name {
-	case StepCCM:
-		return cfg.Addons.CCM.Helm
-	case StepCSI:
-		return cfg.Addons.CSI.Helm
-	case StepMetricsServer:
-		return cfg.Addons.MetricsServer.Helm
-	case StepCertManager:
-		return cfg.Addons.CertManager.Helm
-	case StepTraefik:
-		return cfg.Addons.Traefik.Helm
-	case StepExternalDNS:
-		return cfg.Addons.ExternalDNS.Helm
-	case StepArgoCD:
-		return cfg.Addons.ArgoCD.Helm
-	case StepMonitoring:
-		return cfg.Addons.KubePrometheusStack.Helm
-	case StepLogging:
-		return cfg.Addons.Logging.LokiHelm
-	default:
-		return config.HelmChartConfig{}
+	chart, ok := stepCharts[name]
+	if !ok {
+		return ""
 	}
+	return helm.GetChartSpec(chart.chartName, chart.helm(cfg)).Version
 }
 
 // CNIVersion returns the desired Cilium chart version. Cilium is installed in
