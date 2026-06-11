@@ -3,6 +3,7 @@ package talos
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -501,4 +502,28 @@ func TestLoadSecrets_Errors(t *testing.T) {
 
 func writeTestFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0600)
+}
+
+// TestGeneratedConfigEncryptsSecretsAtRest pins a security property we rely
+// on: Talos-generated control plane configs must carry a secretbox encryption
+// secret so Kubernetes Secrets are encrypted at rest in etcd. The machinery
+// includes it by default; this test ensures a future generator change or
+// machinery upgrade cannot silently drop it.
+func TestGeneratedConfigEncryptsSecretsAtRest(t *testing.T) {
+	t.Parallel()
+
+	sb, err := NewSecrets("v1.9.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g := NewGenerator("enc-check", "1.32.0", "v1.9.0", "https://1.2.3.4:6443", sb)
+	cfg, err := g.GenerateControlPlaneConfig([]string{"1.2.3.4"}, "cp-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(cfg), "secretboxEncryptionSecret") {
+		t.Error("control plane config lacks secretboxEncryptionSecret: Kubernetes Secrets would be stored unencrypted in etcd")
+	}
 }

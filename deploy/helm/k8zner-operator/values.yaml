@@ -115,5 +115,11 @@ metrics:
 healthProbe:
   port: 8081
 
+# NetworkPolicy restricting the operator pod to the traffic it needs.
+# Not rendered when hostNetwork is enabled, because NetworkPolicies do not
+# apply to hostNetwork pods.
+networkPolicy:
+  enabled: true
+
 # Log level (debug, info, error)
 logLevel: info

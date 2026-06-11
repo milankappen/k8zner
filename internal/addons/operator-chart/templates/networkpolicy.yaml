@@ -1,0 +1,53 @@
+{{- /*
+NetworkPolicies do not apply to hostNetwork pods, so skip rendering when the
+operator runs in hostNetwork mode (e.g. before CNI is installed).
+*/}}
+{{- if and .Values.networkPolicy.enabled (not .Values.hostNetwork) }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "k8zner-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8zner-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "k8zner-operator.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow metrics scraping and health probes from anywhere in-cluster.
+    # Kubelet probes originate from the node itself, which NetworkPolicy
+    # cannot select reliably, so no `from` restriction is applied; all
+    # other ingress is denied because this policy selects the pod.
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.metrics.port }}
+        - protocol: TCP
+          port: {{ .Values.healthProbe.port }}
+  egress:
+    # DNS resolution (CoreDNS and upstream resolvers).
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The Hetzner Cloud API, Helm chart repositories, ghcr.io, the Kubernetes
+    # apiserver, and the Talos API on cluster nodes are all outside the
+    # cluster network, so they cannot be selected more precisely than by CIDR:
+    #   - 443:   HTTPS (Hetzner Cloud API, chart repos, ghcr.io, apiserver LB)
+    #   - 6443:  Kubernetes apiserver
+    #   - 50000: Talos API on cluster nodes
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 50000
+{{- end }}
