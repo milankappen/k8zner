@@ -49,4 +49,14 @@ var DefaultChartSpecs = map[string]ChartSpec{
 		Name:       "kube-prometheus-stack",
 		Version:    "72.6.2",
 	},
+	"loki": {
+		Repository: "https://grafana.github.io/helm-charts",
+		Name:       "loki",
+		Version:    "6.55.0",
+	},
+	"alloy": {
+		Repository: "https://grafana.github.io/helm-charts",
+		Name:       "alloy",
+		Version:    "1.9.0",
+	},
 }

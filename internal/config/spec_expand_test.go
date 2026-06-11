@@ -836,3 +836,44 @@ func TestExpandSpec_WildcardCertificate(t *testing.T) {
 		}
 	})
 }
+
+func TestExpandSpec_Logging(t *testing.T) {
+	t.Parallel()
+
+	base := func() *Spec {
+		return &Spec{
+			Name:    "test",
+			Region:  RegionFalkenstein,
+			Mode:    ModeDev,
+			Workers: WorkerSpec{Count: 1, Size: SizeCX22},
+		}
+	}
+
+	t.Run("disabled by default", func(t *testing.T) {
+		t.Parallel()
+		expanded, err := ExpandSpec(base())
+		if err != nil {
+			t.Fatalf("ExpandSpec failed: %v", err)
+		}
+		if expanded.Addons.Logging.Enabled {
+			t.Error("logging should be opt-in")
+		}
+	})
+
+	t.Run("enabled with default retention", func(t *testing.T) {
+		t.Parallel()
+		spec := base()
+		spec.Logging = true
+
+		expanded, err := ExpandSpec(spec)
+		if err != nil {
+			t.Fatalf("ExpandSpec failed: %v", err)
+		}
+		if !expanded.Addons.Logging.Enabled {
+			t.Error("logging should be enabled when requested")
+		}
+		if expanded.Addons.Logging.Retention != "168h" {
+			t.Errorf("expected default retention 168h, got %q", expanded.Addons.Logging.Retention)
+		}
+	})
+}

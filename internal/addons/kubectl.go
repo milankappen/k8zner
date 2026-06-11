@@ -33,6 +33,16 @@ func withBaselinePodSecurity(labels map[string]string) map[string]string {
 	return merged
 }
 
+// withHostAccessPodSecurity merges pod security labels for namespaces whose
+// workloads legitimately need host access (hostPath/hostNetwork/hostPID, e.g.
+// node-exporter): enforcement stays open while audit/warn record baseline
+// violations for visibility.
+func withHostAccessPodSecurity(labels map[string]string) map[string]string {
+	merged := withBaselinePodSecurity(labels)
+	merged["pod-security.kubernetes.io/enforce"] = "privileged"
+	return merged
+}
+
 // ensureNamespace creates a Kubernetes namespace with the given labels using server-side apply.
 func ensureNamespace(ctx context.Context, client k8sclient.Client, name string, labels map[string]string) error {
 	yaml := helm.NamespaceManifest(name, labels)

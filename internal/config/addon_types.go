@@ -29,6 +29,7 @@ type AddonsConfig struct {
 	GatewayAPICRDs         GatewayAPICRDsConfig         `mapstructure:"gateway_api_crds" yaml:"gateway_api_crds"`
 	PrometheusOperatorCRDs PrometheusOperatorCRDsConfig `mapstructure:"prometheus_operator_crds" yaml:"prometheus_operator_crds"`
 	KubePrometheusStack    KubePrometheusStackConfig    `mapstructure:"kube_prometheus_stack" yaml:"kube_prometheus_stack"`
+	Logging                LoggingConfig                `mapstructure:"logging" yaml:"logging"`
 	TalosCCM               TalosCCMConfig               `mapstructure:"talos_ccm" yaml:"talos_ccm"`
 	Cloudflare             CloudflareConfig             `mapstructure:"cloudflare" yaml:"cloudflare"`
 	ExternalDNS            ExternalDNSConfig            `mapstructure:"external_dns" yaml:"external_dns"`
@@ -171,6 +172,23 @@ type CertManagerCloudflareConfig struct {
 	// sets it as the Traefik default, so ingresses without an explicit TLS
 	// secret are covered without per-host certificates.
 	WildcardCertificate bool `mapstructure:"wildcard_certificate" yaml:"wildcard_certificate"`
+}
+
+// LoggingConfig defines the Loki + Alloy log aggregation stack.
+// Loki runs as a single binary with persistent filesystem storage; Alloy
+// tails pod logs via the Kubernetes API and pushes them to Loki.
+type LoggingConfig struct {
+	// Enabled installs the logging stack.
+	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
+
+	// Retention is how long Loki keeps logs (default: 168h).
+	Retention string `mapstructure:"retention" yaml:"retention"`
+
+	// LokiHelm customizes the Loki chart.
+	LokiHelm HelmChartConfig `mapstructure:"loki_helm" yaml:"loki_helm"`
+
+	// AlloyHelm customizes the Alloy chart.
+	AlloyHelm HelmChartConfig `mapstructure:"alloy_helm" yaml:"alloy_helm"`
 }
 
 // TraefikConfig defines the Traefik Proxy ingress controller configuration.

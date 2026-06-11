@@ -61,6 +61,10 @@ type Spec struct {
 	// Default: false
 	Monitoring bool `yaml:"monitoring,omitempty"`
 
+	// Logging enables the Loki + Alloy log aggregation stack.
+	// Logs are kept for 168h by default and stored on a persistent volume.
+	Logging bool `yaml:"logging,omitempty"`
+
 	// GrafanaSubdomain is the subdomain for Grafana dashboard (default: "grafana").
 	// Only used when both Monitoring and Domain are set.
 	// Example: with Domain="example.com", Grafana is at grafana.example.com

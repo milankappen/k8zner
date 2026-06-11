@@ -12,7 +12,7 @@ import (
 
 // applyKubePrometheusStack installs the kube-prometheus-stack (Prometheus, Grafana, Alertmanager).
 func applyKubePrometheusStack(ctx context.Context, client k8sclient.Client, cfg *config.Config) error {
-	if err := ensureNamespace(ctx, client, "monitoring", withBaselinePodSecurity(map[string]string{"name": "monitoring"})); err != nil {
+	if err := ensureNamespace(ctx, client, "monitoring", withHostAccessPodSecurity(map[string]string{"name": "monitoring"})); err != nil {
 		return err
 	}
 

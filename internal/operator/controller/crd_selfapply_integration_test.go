@@ -6,8 +6,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/milankappen/k8zner/internal/operator/crds"
@@ -18,7 +18,9 @@ import (
 // CRD exists — the situation every operator restart hits.
 var _ = Describe("CRD self-apply", func() {
 	It("server-side-applies the embedded CRD idempotently", func() {
-		s := scheme.Scheme
+		// A private scheme: mutating the shared client-go scheme.Scheme here
+		// would race with the manager's decoders running in the background.
+		s := runtime.NewScheme()
 		Expect(apiextensionsv1.AddToScheme(s)).To(Succeed())
 
 		directClient, err := client.New(cfg, client.Options{Scheme: s})

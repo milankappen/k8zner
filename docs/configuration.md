@@ -121,6 +121,33 @@ When set, this automatically enables:
 
 Requires `CF_API_TOKEN` environment variable.
 
+### wildcard_certificate (optional)
+
+Issue a single wildcard certificate for `*.{domain}` instead of per-host
+certificates, and make it Traefik's default.
+
+```yaml
+domain: example.com
+wildcard_certificate: true
+```
+
+Any ingress under the domain that does not name its own TLS secret is then
+served with the wildcard certificate. Ingresses with an explicit TLS secret
+are unaffected. Requires `domain`.
+
+### logging (optional)
+
+Install the log aggregation stack: Loki (single binary, persisted on a
+Hetzner volume, 7-day retention) plus Grafana Alloy as the collector.
+
+```yaml
+logging: true
+```
+
+Alloy tails pod logs through the Kubernetes API — no privileged host mounts.
+When `monitoring` is also enabled, Loki is registered as a Grafana datasource
+automatically.
+
 ### cert_email (optional)
 
 Email address for Let's Encrypt certificate expiration notifications.

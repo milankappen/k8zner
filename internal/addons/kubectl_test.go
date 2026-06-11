@@ -306,3 +306,14 @@ func TestApplyFromURL_ContextCanceled(t *testing.T) {
 	err := applyFromURL(ctx, client, "test-addon", server.URL)
 	require.Error(t, err)
 }
+
+func TestWithHostAccessPodSecurity(t *testing.T) {
+	t.Parallel()
+
+	labels := withHostAccessPodSecurity(map[string]string{"name": "monitoring"})
+
+	assert.Equal(t, "privileged", labels["pod-security.kubernetes.io/enforce"])
+	assert.Equal(t, "baseline", labels["pod-security.kubernetes.io/audit"])
+	assert.Equal(t, "baseline", labels["pod-security.kubernetes.io/warn"])
+	assert.Equal(t, "monitoring", labels["name"])
+}

@@ -69,6 +69,36 @@ This process is fully automatic. Monitor via:
 kubectl get events -n k8zner-system | grep -i "control-plane\|healing\|quorum"
 ```
 
+## Addon Upgrades
+
+The operator keeps addons converged on the chart versions pinned in the
+running operator release. When you upgrade the operator, outdated addons are
+re-rendered and re-applied one at a time, only while every desired node is
+ready, with events (`AddonUpgrading`, `AddonUpgraded`, `AddonUpgradeFailed`)
+and per-addon versions visible in `status.addons`. Addons enabled in the spec
+after provisioning are installed the same way.
+
+Cilium is deliberately excluded from automatic upgrades: CNI upgrades affect
+every pod on the cluster and remain a manual operation.
+
+The `UpToDate` condition reports Kubernetes version skew: if any node's
+kubelet does not match `spec.kubernetes.version`, the condition turns False
+with an `UpgradePending` event. The operator never replaces nodes for version
+reasons — run `k8zner apply` to roll out node upgrades.
+
+## Sharing Read-Only Access
+
+Generate a kubeconfig scoped to the built-in `view` ClusterRole (no access to
+Secrets):
+
+```bash
+k8zner kubeconfig --read-only                 # token valid 1 year
+k8zner kubeconfig --read-only --duration 720h -o ./readonly.yaml
+```
+
+The credential is a ServiceAccount token; revoke access by deleting the
+`k8zner-viewer` ClusterRoleBinding.
+
 ## Upgrading Kubernetes
 
 k8zner pins Kubernetes and Talos versions in its version matrix. To upgrade:

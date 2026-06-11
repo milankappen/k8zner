@@ -22,6 +22,7 @@ const (
 	StepArgoCD        = "argocd"
 	StepMonitoring    = "monitoring"
 	StepTalosBackup   = "talos-backup"
+	StepLogging       = "logging"
 )
 
 // AddonStep defines a single installable addon with its install order and
@@ -44,6 +45,9 @@ var stepChartNames = map[string]string{
 	StepExternalDNS:   "external-dns",
 	StepArgoCD:        "argo-cd",
 	StepMonitoring:    "kube-prometheus-stack",
+	// The logging step installs Loki and Alloy; the Loki chart version is
+	// what gets tracked for upgrades.
+	StepLogging: "loki",
 }
 
 // stepVersion returns the desired version for a step: the resolved helm chart
@@ -77,6 +81,8 @@ func stepHelmConfig(name string, cfg *config.Config) config.HelmChartConfig {
 		return cfg.Addons.ArgoCD.Helm
 	case StepMonitoring:
 		return cfg.Addons.KubePrometheusStack.Helm
+	case StepLogging:
+		return cfg.Addons.Logging.LokiHelm
 	default:
 		return config.HelmChartConfig{}
 	}
@@ -124,6 +130,9 @@ func EnabledSteps(cfg *config.Config) []AddonStep {
 	if cfg.Addons.TalosBackup.Enabled {
 		add(StepTalosBackup, 10)
 	}
+	if cfg.Addons.Logging.Enabled {
+		add(StepLogging, 11)
+	}
 
 	return steps
 }
@@ -157,6 +166,8 @@ func InstallStep(ctx context.Context, stepName string, cfg *config.Config, kubec
 		return installMonitoringStep(ctx, client, cfg)
 	case StepTalosBackup:
 		return installTalosBackupStep(ctx, client, cfg)
+	case StepLogging:
+		return applyLogging(ctx, client, cfg)
 	default:
 		return fmt.Errorf("unknown addon step: %s", stepName)
 	}

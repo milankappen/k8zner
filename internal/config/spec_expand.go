@@ -220,6 +220,12 @@ func expandAddons(cfg *Spec, vm VersionMatrix) AddonsConfig {
 
 		// Talos Backup - enabled only when backup is set
 		TalosBackup: expandTalosBackup(cfg),
+
+		// Logging (Loki + Alloy) - enabled only when logging is set
+		Logging: LoggingConfig{
+			Enabled:   cfg.Logging,
+			Retention: "168h",
+		},
 	}
 }
 

@@ -259,6 +259,10 @@ type AddonSpec struct {
 	// +optional
 	Monitoring bool `json:"monitoring,omitempty"`
 
+	// Logging enables the Loki + Alloy log aggregation stack
+	// +optional
+	Logging bool `json:"logging,omitempty"`
+
 	// ArgoSubdomain overrides the default "argo" subdomain for ArgoCD ingress.
 	// The full host will be "{argoSubdomain}.{domain}".
 	// +optional
