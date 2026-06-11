@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -70,6 +71,19 @@ func generateReadOnlyKubeconfig(ctx context.Context, clientset kubernetes.Interf
 		return nil, err
 	}
 
+	// Merged/managed kubeconfigs often reference the CA by file path rather
+	// than inline data; inline it so the generated kubeconfig is portable.
+	caData := cluster.CertificateAuthorityData
+	if len(caData) == 0 && cluster.CertificateAuthority != "" {
+		caData, err = os.ReadFile(cluster.CertificateAuthority) // #nosec G304 -- path comes from the user's own kubeconfig
+		if err != nil {
+			return nil, fmt.Errorf("failed to read certificate authority file: %w", err)
+		}
+	}
+	if len(caData) == 0 && !cluster.InsecureSkipTLSVerify {
+		return nil, fmt.Errorf("admin kubeconfig has no certificate authority for cluster %q", clusterName)
+	}
+
 	if err := ensureViewerServiceAccount(ctx, clientset); err != nil {
 		return nil, err
 	}
@@ -92,7 +106,8 @@ func generateReadOnlyKubeconfig(ctx context.Context, clientset kubernetes.Interf
 	out := clientcmdapi.NewConfig()
 	out.Clusters[clusterName] = &clientcmdapi.Cluster{
 		Server:                   cluster.Server,
-		CertificateAuthorityData: cluster.CertificateAuthorityData,
+		CertificateAuthorityData: caData,
+		InsecureSkipTLSVerify:    cluster.InsecureSkipTLSVerify,
 	}
 	out.AuthInfos[viewerName] = &clientcmdapi.AuthInfo{
 		Token: tokenReq.Status.Token,

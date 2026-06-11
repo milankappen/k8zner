@@ -48,24 +48,27 @@ func (r *ClusterReconciler) reconcileAddonUpgrades(ctx context.Context, cluster 
 		return ctrl.Result{}, false
 	}
 
-	steps := addons.EnabledSteps(cfg)
+	if cluster.Status.Addons == nil {
+		cluster.Status.Addons = make(map[string]k8znerv1alpha1.AddonStatus)
+	}
+	backfills, next := planAddonReconcile(addons.EnabledSteps(cfg), cluster.Status.Addons)
+	if len(backfills) == 0 && next == nil {
+		return ctrl.Result{}, false
+	}
 
-	// In the common steady state everything is converged, and version
-	// backfills only mutate status. Fetching cluster access dials the Talos
-	// API, so only pay for it when an install or upgrade is actually due.
+	// Version backfills only mutate status. Fetching cluster access dials
+	// the Talos API, so only pay for it when an install or upgrade is due.
 	var kubeconfig []byte
 	var networkID int64
-	if backfills, next := planAddonReconcile(steps, cluster.Status.Addons); next != nil {
+	if next != nil {
 		kubeconfig, networkID, err = r.addonClusterAccess(ctx, cluster, creds)
 		if err != nil {
 			logger.V(1).Info("skipping addon upgrade check", "reason", err.Error())
 			return ctrl.Result{}, false
 		}
-	} else if len(backfills) == 0 {
-		return ctrl.Result{}, false
 	}
 
-	return r.applyAddonPlan(ctx, cluster, steps, cfg, kubeconfig, networkID)
+	return r.applyAddonPlan(ctx, cluster, backfills, next, cfg, kubeconfig, networkID)
 }
 
 // clusterStableForUpgrades reports whether all desired nodes are ready.
@@ -101,9 +104,9 @@ func planAddonReconcile(steps []addons.AddonStep, statuses map[string]k8znerv1al
 				return backfills, &step
 			}
 		case k8znerv1alpha1.AddonPhaseFailed, k8znerv1alpha1.AddonPhaseUpgrading:
-			if status.Version != step.Version {
-				return backfills, &step
-			}
+			// Always re-apply: a half-applied upgrade can leave Failed at
+			// the desired version, and re-rendering is the only repair.
+			return backfills, &step
 		default:
 			// Pending/Installing belong to the provisioning state machine.
 		}
@@ -112,16 +115,14 @@ func planAddonReconcile(steps []addons.AddonStep, statuses map[string]k8znerv1al
 	return backfills, nil
 }
 
-// applyAddonPlan executes the result of planAddonReconcile: it records version
+// applyAddonPlan executes a plan from planAddonReconcile: it records version
 // backfills and performs at most one addon install/upgrade per reconcile.
-func (r *ClusterReconciler) applyAddonPlan(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster, steps []addons.AddonStep, cfg *config.Config, kubeconfig []byte, networkID int64) (ctrl.Result, bool) {
+func (r *ClusterReconciler) applyAddonPlan(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster, backfills map[string]string, next *addons.AddonStep, cfg *config.Config, kubeconfig []byte, networkID int64) (ctrl.Result, bool) {
 	logger := log.FromContext(ctx)
 
 	if cluster.Status.Addons == nil {
 		cluster.Status.Addons = make(map[string]k8znerv1alpha1.AddonStatus)
 	}
-
-	backfills, next := planAddonReconcile(steps, cluster.Status.Addons)
 
 	for name, version := range backfills {
 		status := cluster.Status.Addons[name]

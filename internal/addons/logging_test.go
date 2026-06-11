@@ -102,5 +102,19 @@ func TestEnabledSteps_IncludesLogging(t *testing.T) {
 	require.Len(t, steps, 1)
 	assert.Equal(t, StepLogging, steps[0].Name)
 	assert.Equal(t, 11, steps[0].Order)
-	assert.Equal(t, helm.DefaultChartSpecs["loki"].Version, steps[0].Version)
+	// Composite version: bumping either chart must register as an upgrade.
+	assert.Contains(t, steps[0].Version, helm.DefaultChartSpecs["loki"].Version)
+	assert.Contains(t, steps[0].Version, helm.DefaultChartSpecs["alloy"].Version)
+}
+
+func TestEnabledSteps_LoggingVersionTracksAlloy(t *testing.T) {
+	t.Parallel()
+
+	base := EnabledSteps(loggingTestConfig())[0].Version
+
+	cfg := loggingTestConfig()
+	cfg.Addons.Logging.AlloyHelm.Version = "9.9.9"
+	bumped := EnabledSteps(cfg)[0].Version
+
+	assert.NotEqual(t, base, bumped, "an alloy chart bump must trigger a logging upgrade")
 }

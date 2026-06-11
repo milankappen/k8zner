@@ -109,20 +109,34 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	switch logLevel {
-	case "debug":
-		opts.Development = true
-		opts.Level = zapcore.DebugLevel
-	case "info":
-		opts.Level = zapcore.InfoLevel
-	case "error":
-		opts.Level = zapcore.ErrorLevel
-	default:
-		setupLog.Error(nil, "invalid --log-level, must be debug, info, or error", "value", logLevel)
-		os.Exit(1)
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+
+	// Explicitly-passed zap flags stay authoritative; --log-level only fills
+	// in when they are absent. Unknown values fall back to info instead of
+	// exiting: a values.yaml typo must not crash-loop the operator that
+	// self-heals the cluster it runs on.
+	invalidLevel := false
+	if !setFlags["zap-log-level"] && !setFlags["zap-devel"] {
+		switch logLevel {
+		case "debug":
+			opts.Development = true
+			opts.Level = zapcore.DebugLevel
+		case "info":
+			opts.Level = zapcore.InfoLevel
+		case "error":
+			opts.Level = zapcore.ErrorLevel
+		default:
+			invalidLevel = true
+			opts.Level = zapcore.InfoLevel
+		}
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if invalidLevel {
+		setupLog.Error(nil, "invalid --log-level, using info (valid: debug, info, error)", "value", logLevel)
+	}
 
 	setupLog.Info("starting k8zner-operator", "version", Version)
 
@@ -130,9 +144,11 @@ func main() {
 
 	// Self-apply the CRD before the manager starts so the served schema
 	// always matches this binary (Helm never upgrades chart crds/).
+	// Non-fatal: operators deployed before the apiextensions RBAC existed
+	// would otherwise crash-loop on upgrade; they can still reconcile
+	// against the already-installed CRD.
 	if err := ensureCRDs(restConfig); err != nil {
-		setupLog.Error(err, "unable to ensure CRDs")
-		os.Exit(1)
+		setupLog.Error(err, "unable to self-apply CRDs; continuing with the schema already installed")
 	}
 
 	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{

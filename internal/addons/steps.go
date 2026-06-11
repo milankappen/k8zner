@@ -66,6 +66,12 @@ func stepVersion(name string, cfg *config.Config) string {
 		}
 		return talosBackupVersion()
 	}
+	// The logging step installs two charts; combine both versions so a bump
+	// to either one registers as an upgrade.
+	if name == StepLogging {
+		return helm.GetChartSpec("loki", cfg.Addons.Logging.LokiHelm).Version +
+			"+alloy-" + helm.GetChartSpec("alloy", cfg.Addons.Logging.AlloyHelm).Version
+	}
 	chart, ok := stepCharts[name]
 	if !ok {
 		return ""

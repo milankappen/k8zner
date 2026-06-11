@@ -102,6 +102,32 @@ func TestGenerateReadOnlyKubeconfig(t *testing.T) {
 	})
 }
 
+func TestGenerateReadOnlyKubeconfig_CAFromFile(t *testing.T) {
+	t.Parallel()
+
+	caPath := filepath.Join(t.TempDir(), "ca.crt")
+	require.NoError(t, os.WriteFile(caPath, []byte("file-ca-data"), 0o600))
+
+	adminCfg := adminKubeconfigFixture()
+	adminCfg.Clusters["my-cluster"].CertificateAuthorityData = nil
+	adminCfg.Clusters["my-cluster"].CertificateAuthority = caPath
+
+	out, err := generateReadOnlyKubeconfig(context.Background(), newFakeClientsetWithToken("tok"), adminCfg, "my-cluster", time.Hour)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "ZmlsZS1jYS1kYXRh", "CA file contents must be inlined as base64")
+}
+
+func TestGenerateReadOnlyKubeconfig_NoCAErrors(t *testing.T) {
+	t.Parallel()
+
+	adminCfg := adminKubeconfigFixture()
+	adminCfg.Clusters["my-cluster"].CertificateAuthorityData = nil
+
+	_, err := generateReadOnlyKubeconfig(context.Background(), newFakeClientsetWithToken("tok"), adminCfg, "my-cluster", time.Hour)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "certificate authority")
+}
+
 func TestWriteReadOnlyKubeconfig_FilePermissions(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {

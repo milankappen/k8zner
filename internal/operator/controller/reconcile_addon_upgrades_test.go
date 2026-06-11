@@ -111,6 +111,25 @@ func TestPlanAddonReconcile(t *testing.T) {
 		assert.Equal(t, addons.StepTraefik, next.Name)
 	})
 
+	t.Run("failed addon at the desired version is still repaired", func(t *testing.T) {
+		t.Parallel()
+		// A half-applied upgrade can leave Phase=Failed with the recorded
+		// version equal to the (reverted) desired version; re-applying the
+		// manifests is the only way back to a converged state.
+		statuses := map[string]k8znerv1alpha1.AddonStatus{
+			addons.StepCCM: installed("1.29.0"),
+			addons.StepTraefik: {
+				Installed: true,
+				Phase:     k8znerv1alpha1.AddonPhaseFailed,
+				Version:   "39.0.0",
+			},
+		}
+
+		_, next := planAddonReconcile(steps, statuses)
+		require.NotNil(t, next)
+		assert.Equal(t, addons.StepTraefik, next.Name)
+	})
+
 	t.Run("addon mid-install during provisioning is left alone", func(t *testing.T) {
 		t.Parallel()
 		statuses := map[string]k8znerv1alpha1.AddonStatus{
@@ -163,7 +182,8 @@ func TestApplyAddonPlan(t *testing.T) {
 			Phase:     k8znerv1alpha1.AddonPhaseInstalled,
 		}
 
-		_, handled := r.applyAddonPlan(context.Background(), cluster, steps, &config.Config{}, nil, 0)
+		backfills := map[string]string{addons.StepTraefik: "39.0.0"}
+		_, handled := r.applyAddonPlan(context.Background(), cluster, backfills, nil, &config.Config{}, nil, 0)
 
 		assert.True(t, handled)
 		assert.Zero(t, installs)
@@ -184,7 +204,7 @@ func TestApplyAddonPlan(t *testing.T) {
 			RetryCount: 3,
 		}
 
-		result, handled := r.applyAddonPlan(context.Background(), cluster, steps, &config.Config{}, nil, 0)
+		result, handled := r.applyAddonPlan(context.Background(), cluster, nil, &steps[0], &config.Config{}, nil, 0)
 
 		assert.True(t, handled)
 		assert.Equal(t, addons.StepTraefik, installedName)
@@ -207,7 +227,7 @@ func TestApplyAddonPlan(t *testing.T) {
 			Version:   "38.0.0",
 		}
 
-		result, handled := r.applyAddonPlan(context.Background(), cluster, steps, &config.Config{}, nil, 0)
+		result, handled := r.applyAddonPlan(context.Background(), cluster, nil, &steps[0], &config.Config{}, nil, 0)
 
 		assert.True(t, handled)
 		got := cluster.Status.Addons[addons.StepTraefik]
@@ -230,7 +250,7 @@ func TestApplyAddonPlan(t *testing.T) {
 			Version:   "39.0.0",
 		}
 
-		_, handled := r.applyAddonPlan(context.Background(), cluster, steps, &config.Config{}, nil, 0)
+		_, handled := r.applyAddonPlan(context.Background(), cluster, nil, nil, &config.Config{}, nil, 0)
 		assert.False(t, handled)
 	})
 }

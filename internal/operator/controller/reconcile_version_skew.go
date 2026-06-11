@@ -13,6 +13,9 @@ import (
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
 )
 
+// EventReasonUpgradePending marks nodes lagging behind the spec version.
+const EventReasonUpgradePending = "UpgradePending"
+
 // reconcileVersionSkew surfaces pending Kubernetes upgrades as the UpToDate
 // condition by comparing each node's kubelet version against the spec. It is
 // detection only: node upgrades are rolled out explicitly via `k8zner apply`
@@ -57,6 +60,6 @@ func (r *ClusterReconciler) reconcileVersionSkew(ctx context.Context, cluster *k
 		Message: fmt.Sprintf("%d/%d nodes are not on Kubernetes %s; run `k8zner apply` to upgrade",
 			outdated, len(nodes.Items), desired),
 	})
-	r.Recorder.Eventf(cluster, corev1.EventTypeNormal, "UpgradePending",
+	r.Recorder.Eventf(cluster, corev1.EventTypeNormal, EventReasonUpgradePending,
 		"%d/%d nodes need upgrading to Kubernetes %s", outdated, len(nodes.Items), desired)
 }

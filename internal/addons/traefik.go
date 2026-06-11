@@ -21,7 +21,13 @@ func applyTraefik(ctx context.Context, client k8sclient.Client, cfg *config.Conf
 	// Build Traefik Helm chart values
 	values := buildTraefikValues(cfg)
 
-	return installHelmAddon(ctx, client, "traefik", "traefik", cfg.Addons.Traefik.Helm, values)
+	if err := installHelmAddon(ctx, client, "traefik", "traefik", cfg.Addons.Traefik.Helm, values); err != nil {
+		return err
+	}
+
+	// The wildcard certificate's default TLSStore depends on Traefik's CRDs,
+	// so it is applied here rather than in the cert-manager step.
+	return applyWildcardCertificate(ctx, client, cfg)
 }
 
 // buildTraefikValues creates helm values for Traefik configuration.

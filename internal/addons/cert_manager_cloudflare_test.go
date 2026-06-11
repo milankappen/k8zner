@@ -1,12 +1,13 @@
 package addons
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/milankappen/k8zner/internal/config"
 )
 
 func TestBuildClusterIssuerManifest_Staging(t *testing.T) {
@@ -171,11 +172,8 @@ func TestBuildWildcardCertManifest(t *testing.T) {
 	manifest, err := buildWildcardCertManifest("example.com", "letsencrypt-cloudflare-production")
 	require.NoError(t, err)
 
-	docs := strings.Split(string(manifest), "\n---\n")
-	require.Len(t, docs, 2, "expected Certificate and TLSStore documents")
-
 	var cert map[string]any
-	require.NoError(t, yaml.Unmarshal([]byte(docs[0]), &cert))
+	require.NoError(t, yaml.Unmarshal(manifest, &cert))
 	assert.Equal(t, "cert-manager.io/v1", cert["apiVersion"])
 	assert.Equal(t, "Certificate", cert["kind"])
 
@@ -189,9 +187,13 @@ func TestBuildWildcardCertManifest(t *testing.T) {
 	issuerRef := certSpec["issuerRef"].(map[string]any)
 	assert.Equal(t, "letsencrypt-cloudflare-production", issuerRef["name"])
 	assert.Equal(t, "ClusterIssuer", issuerRef["kind"])
+}
+
+func TestBuildTLSStoreManifest(t *testing.T) {
+	t.Parallel()
 
 	var store map[string]any
-	require.NoError(t, yaml.Unmarshal([]byte(docs[1]), &store))
+	require.NoError(t, yaml.Unmarshal(buildTLSStoreManifest(), &store))
 	assert.Equal(t, "traefik.io/v1alpha1", store["apiVersion"])
 	assert.Equal(t, "TLSStore", store["kind"])
 
@@ -204,6 +206,16 @@ func TestBuildWildcardCertManifest(t *testing.T) {
 	assert.Equal(t, "wildcard-tls", defaultCert["secretName"])
 }
 
+func TestCloudflareIssuerName(t *testing.T) {
+	t.Parallel()
+
+	withEmail := config.CertManagerCloudflareConfig{Email: "ops@example.com"}
+	assert.Equal(t, "letsencrypt-cloudflare-production", cloudflareIssuerName(withEmail))
+
+	// Without an email only the staging issuer exists.
+	assert.Equal(t, "letsencrypt-cloudflare-staging", cloudflareIssuerName(config.CertManagerCloudflareConfig{}))
+}
+
 func TestBuildWildcardCertManifest_SanitizesDomain(t *testing.T) {
 	t.Parallel()
 
@@ -211,8 +223,7 @@ func TestBuildWildcardCertManifest_SanitizesDomain(t *testing.T) {
 	require.NoError(t, err)
 
 	var cert map[string]any
-	docs := strings.Split(string(manifest), "\n---\n")
-	require.NoError(t, yaml.Unmarshal([]byte(docs[0]), &cert))
+	require.NoError(t, yaml.Unmarshal(manifest, &cert))
 	certMeta := cert["metadata"].(map[string]any)
 	assert.Equal(t, "wildcard-apps-my-domain-co-uk", certMeta["name"])
 }

@@ -378,6 +378,8 @@ func updateClusterSpecFromConfig(k8zCluster *k8znerv1alpha1.K8znerCluster, cfg *
 	k8zCluster.Spec.Addons.Traefik = cfg.Addons.Traefik.Enabled
 	k8zCluster.Spec.Addons.ArgoCD = cfg.Addons.ArgoCD.Enabled
 	k8zCluster.Spec.Addons.Monitoring = cfg.Addons.KubePrometheusStack.Enabled
+	k8zCluster.Spec.Addons.Logging = cfg.Addons.Logging.Enabled
+	k8zCluster.Spec.Addons.WildcardCertificate = cfg.Addons.CertManager.Cloudflare.WildcardCertificate
 
 	if cfg.Addons.TalosBackup.Enabled && cfg.Addons.TalosBackup.S3AccessKey != "" {
 		if k8zCluster.Spec.Backup == nil {

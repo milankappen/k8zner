@@ -309,6 +309,14 @@ func (r *ClusterReconciler) reconcileRunningPhase(ctx context.Context, cluster *
 		return result, err
 	}
 
+	// Non-fatal health probes: only run when cluster is stable (no scaling
+	// in progress). These run BEFORE addon upgrades so a persistently
+	// failing upgrade cannot starve health/version reporting forever.
+	r.reconcileInfraHealth(ctx, cluster)
+	r.reconcileAddonHealth(ctx, cluster)
+	r.reconcileConnectivityHealth(ctx, cluster)
+	r.reconcileVersionSkew(ctx, cluster)
+
 	// Keep addons converged on their desired versions (one upgrade per
 	// reconcile). Only operator-managed clusters carry credentials to do so.
 	if cluster.Spec.CredentialsRef.Name != "" {
@@ -316,12 +324,6 @@ func (r *ClusterReconciler) reconcileRunningPhase(ctx context.Context, cluster *
 			return result, nil
 		}
 	}
-
-	// Non-fatal health probes: only run when cluster is stable (no scaling in progress)
-	r.reconcileInfraHealth(ctx, cluster)
-	r.reconcileAddonHealth(ctx, cluster)
-	r.reconcileConnectivityHealth(ctx, cluster)
-	r.reconcileVersionSkew(ctx, cluster)
 
 	return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
 }

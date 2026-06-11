@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -20,6 +21,10 @@ import (
 	"github.com/milankappen/k8zner/internal/config"
 	operatorprov "github.com/milankappen/k8zner/internal/operator/provisioning"
 )
+
+// errCredentialsUnavailable marks failures loading the cluster credentials
+// so callers can report them under the CredentialsError event reason.
+var errCredentialsUnavailable = errors.New("failed to load credentials")
 
 // reconcileCNIPhase installs Cilium CNI as the first addon.
 // This must complete before any other pods can be scheduled (except hostNetwork pods).
@@ -189,7 +194,13 @@ func (r *ClusterReconciler) reconcileAddonsPhase(ctx context.Context, cluster *k
 
 	cfg, kubeconfig, networkID, err := r.prepareAddonInputs(ctx, cluster)
 	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to prepare addon installation")
+		// Credential failures keep their dedicated reason so alerting that
+		// filters on CredentialsError sees them in every phase.
+		reason := EventReasonAddonsFailed
+		if errors.Is(err, errCredentialsUnavailable) {
+			reason = EventReasonCredentialsError
+		}
+		r.logAndRecordError(ctx, cluster, err, reason, "Failed to prepare addon installation")
 		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
 	}
 
@@ -218,7 +229,7 @@ func (r *ClusterReconciler) prepareAddonInputs(ctx context.Context, cluster *k8z
 func (r *ClusterReconciler) addonConfig(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster) (*config.Config, *operatorprov.Credentials, error) {
 	creds, err := r.phaseAdapter.LoadCredentials(ctx, cluster)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load credentials: %w", err)
+		return nil, nil, fmt.Errorf("%w: %w", errCredentialsUnavailable, err)
 	}
 
 	cfg, err := operatorprov.SpecToConfig(cluster, creds)

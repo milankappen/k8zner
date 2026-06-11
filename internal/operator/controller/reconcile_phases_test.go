@@ -611,10 +611,13 @@ func TestPhaseTransitionLogic(t *testing.T) {
 
 func TestReconcilePhases_EventRecording(t *testing.T) {
 	t.Parallel()
-	scheme := setupTestScheme(t)
 
 	t.Run("infrastructure skip records event", func(t *testing.T) {
 		t.Parallel()
+		// Per-subtest scheme: the fake client mutates its scheme when it
+		// Gets an unregistered type (connectivity probes), so parallel
+		// subtests must not share one.
+		scheme := setupTestScheme(t)
 		cluster := &k8znerv1alpha1.K8znerCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-cluster",
@@ -652,6 +655,7 @@ func TestReconcilePhases_EventRecording(t *testing.T) {
 
 	t.Run("running phase records no error events when healthy", func(t *testing.T) {
 		t.Parallel()
+		scheme := setupTestScheme(t)
 		cluster := &k8znerv1alpha1.K8znerCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-cluster",
