@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -37,12 +38,20 @@ func clusterCRD() (*apiextensionsv1.CustomResourceDefinition, error) {
 // matches the operator binary. ForceOwnership takes over fields previously
 // applied by kubectl or the CLI install path.
 func Ensure(ctx context.Context, c client.Client) error {
+	// Validate the embedded manifest decodes as a CRD before applying.
 	crd, err := clusterCRD()
 	if err != nil {
 		return err
 	}
 
-	if err := c.Patch(ctx, crd, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
+	// Apply from the raw manifest (not the typed object): an unstructured
+	// apply configuration only sends fields the YAML actually sets.
+	u := &unstructured.Unstructured{}
+	if err := yaml.Unmarshal(clusterCRDManifest, &u.Object); err != nil {
+		return fmt.Errorf("failed to decode embedded CRD manifest: %w", err)
+	}
+
+	if err := c.Apply(ctx, client.ApplyConfigurationFromUnstructured(u), client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("failed to apply CRD %s: %w", crd.Name, err)
 	}
 	return nil

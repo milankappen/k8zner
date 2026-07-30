@@ -66,7 +66,7 @@ func ensureCRDs(restConfig *rest.Config) error {
 // newline, which would make every Hetzner API call fail with 401.
 func loadHCloudToken() (string, error) {
 	if path := os.Getenv("HCLOUD_TOKEN_FILE"); path != "" {
-		data, err := os.ReadFile(path) // #nosec G304 -- path is operator config, not user input
+		data, err := os.ReadFile(path) // #nosec G304 G703 -- path is operator config, not user input
 		if err != nil {
 			return "", fmt.Errorf("failed to read HCLOUD_TOKEN_FILE: %w", err)
 		}

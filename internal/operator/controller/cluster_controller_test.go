@@ -11,9 +11,13 @@ import (
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -30,6 +34,17 @@ func setupTestScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, k8znerv1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, batchv1.AddToScheme(scheme))
+
+	// Pre-register the unstructured APIService kind that the connectivity
+	// and monitoring health probes Get. The fake client otherwise registers
+	// unknown unstructured kinds into the scheme at request time, which
+	// races when parallel subtests share a scheme.
+	gv := schema.GroupVersion{Group: "apiregistration.k8s.io", Version: "v1"}
+	scheme.AddKnownTypeWithName(gv.WithKind("APIService"), &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(gv.WithKind("APIServiceList"), &unstructured.UnstructuredList{})
+	metav1.AddToGroupVersion(scheme, gv)
 	return scheme
 }
 
