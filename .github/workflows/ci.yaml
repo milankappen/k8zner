@@ -69,7 +69,18 @@ jobs:
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          # GO-2026-5932 is the x/crypto/openpgp "unmaintained package"
+          # advisory with no released fix. It is reached only via package
+          # init of helm.sh/helm/v3/pkg/repo (chart provenance support we
+          # never invoke). Remove the exclusion once helm drops the import.
+          govulncheck -format json ./... > vuln.json
+          UNEXPECTED=$(jq -rs '[.[] | .finding? | select(. != null) | select(.trace[0].function != null) | select(.osv != "GO-2026-5932") | .osv] | unique | .[]' vuln.json)
+          if [ -n "$UNEXPECTED" ]; then
+            echo "govulncheck found vulnerabilities: $UNEXPECTED"
+            govulncheck ./... || true
+            exit 1
+          fi
+          echo "govulncheck clean (allowlisted: GO-2026-5932)"
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.35.0
