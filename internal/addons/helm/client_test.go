@@ -99,9 +99,14 @@ func TestDownloadChartInvalidRepo(t *testing.T) {
 
 // TestClearCache tests cache clearing functionality.
 func TestClearCache(t *testing.T) {
-	t.Parallel()
-	// Create a test file in cache directory
+	// Uses its own isolated cache dir: getCachePath() resolves to the real,
+	// shared ~/.cache/k8zner/charts, which TestDownloadChartIntegration also
+	// writes to. Running in parallel against that shared dir raced clearCache's
+	// os.RemoveAll against the download, intermittently wiping the chart the
+	// other test had just cached.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 
+	// Create a test file in cache directory
 	cachePath := getCachePath()
 	if err := os.MkdirAll(cachePath, 0755); err != nil {
 		t.Fatalf("Failed to create cache directory: %v", err)
