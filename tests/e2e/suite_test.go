@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -51,6 +54,15 @@ func TestMain(m *testing.M) {
 		Client: client,
 	}
 
+	// Tests shell out to the k8zner CLI (e.g. `k8zner doctor`) via $PATH.
+	// Nothing else in the local `make e2e`/`make e2e-fast` targets or the
+	// CI workflow builds/installs that binary first, so build it here and
+	// prepend it to PATH for this process and its children.
+	if err := buildK8znerCLI(); err != nil {
+		log.Printf("Failed to build k8zner CLI for tests: %v", err)
+		os.Exit(1)
+	}
+
 	// Build Talos snapshots before running tests
 	log.Println("=== Building Talos snapshots for E2E tests ===")
 	if err := buildSharedSnapshots(client); err != nil {
@@ -66,6 +78,38 @@ func TestMain(m *testing.M) {
 	cleanupSharedSnapshots(client)
 
 	os.Exit(code)
+}
+
+// buildK8znerCLI builds the k8zner CLI binary and prepends its directory to
+// PATH so exec.Command("k8zner", ...) resolves it for the rest of this run.
+func buildK8znerCLI() error {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return fmt.Errorf("failed to determine module root: runtime.Caller failed")
+	}
+	moduleRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
+
+	binDir, err := os.MkdirTemp("", "k8zner-e2e-bin-")
+	if err != nil {
+		return fmt.Errorf("failed to create temp bin dir: %w", err)
+	}
+	binName := "k8zner"
+	if runtime.GOOS == "windows" {
+		binName = "k8zner.exe"
+	}
+	binPath := filepath.Join(binDir, binName)
+
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/k8zner")
+	cmd.Dir = moduleRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to build k8zner CLI: %w\n%s", err, output)
+	}
+
+	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH")); err != nil {
+		return fmt.Errorf("failed to update PATH: %w", err)
+	}
+	log.Printf("Built k8zner CLI at %s and added to PATH", binPath)
+	return nil
 }
 
 // buildSharedSnapshots builds Talos snapshot for amd64 (ARM64 not used).

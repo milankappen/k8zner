@@ -4,18 +4,20 @@
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
 	// GroupVersion is group version used to register these objects
 	GroupVersion = schema.GroupVersion{Group: "k8zner.io", Version: "v1alpha1"}
 
-	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
+	// Plain apimachinery rather than controller-runtime's deprecated
+	// scheme.Builder: api packages must keep minimal dependencies.
+	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 
 	// AddToScheme adds the types in this group-version to the given scheme
 	AddToScheme = SchemeBuilder.AddToScheme
@@ -24,9 +26,14 @@ var (
 	Scheme = runtime.NewScheme()
 )
 
-func init() {
-	SchemeBuilder.Register(&K8znerCluster{}, &K8znerClusterList{})
+// addKnownTypes registers this group's types with a scheme.
+func addKnownTypes(s *runtime.Scheme) error {
+	s.AddKnownTypes(GroupVersion, &K8znerCluster{}, &K8znerClusterList{})
+	metav1.AddToGroupVersion(s, GroupVersion)
+	return nil
+}
 
+func init() {
 	// Add core Kubernetes types to the Scheme (for Namespace, Secret, etc.)
 	_ = clientgoscheme.AddToScheme(Scheme)
 

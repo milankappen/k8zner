@@ -19,6 +19,14 @@ metadata:
   labels:
     {{- include "k8zner-operator.labels" . | nindent 4 }}
 rules:
+  # CRD self-apply at startup (create cannot be scoped by resourceNames)
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["create"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames: ["k8znerclusters.k8zner.io"]
+    verbs: ["get", "update", "patch"]
   # K8znerCluster CRD
   - apiGroups: ["k8zner.io"]
     resources: ["k8znerclusters"]

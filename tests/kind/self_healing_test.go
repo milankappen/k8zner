@@ -48,6 +48,12 @@ metadata:
   namespace: k8zner-selfhealing-test
 spec:
   region: fsn1
+  credentialsRef:
+    name: test-credentials
+  kubernetes:
+    version: 1.34.1
+  talos:
+    version: v1.12.6
   controlPlanes:
     count: 3
     size: cpx22
@@ -60,15 +66,15 @@ spec:
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Test phase transitions: Pending -> Running
-	t.Log("Testing phase transition: Pending -> Running")
-	pendingPatch := `{"status":{"phase":"Pending","controlPlanes":{"total":3,"ready":0,"unhealthy":0},"workers":{"total":2,"ready":0,"unhealthy":0}}}`
+	// Test phase transitions: Provisioning -> Running
+	t.Log("Testing phase transition: Provisioning -> Running")
+	pendingPatch := `{"status":{"phase":"Provisioning","controlPlanes":{"total":3,"ready":0,"unhealthy":0},"workers":{"total":2,"ready":0,"unhealthy":0}}}`
 	_, err := fw.Kubectl("patch", "k8znercluster", "-n", "k8zner-selfhealing-test", "self-healing-test",
 		"--type=merge", "--subresource=status", "-p", pendingPatch)
 	if err != nil {
-		t.Fatalf("Failed to patch status to Pending: %v", err)
+		t.Fatalf("Failed to patch status to Provisioning: %v", err)
 	}
-	verifyClusterPhase(t, "k8zner-selfhealing-test", "self-healing-test", "Pending")
+	verifyClusterPhase(t, "k8zner-selfhealing-test", "self-healing-test", "Provisioning")
 
 	// Transition to Running
 	runningPatch := `{"status":{"phase":"Running","controlPlanes":{"total":3,"ready":3,"unhealthy":0},"workers":{"total":2,"ready":2,"unhealthy":0}}}`
@@ -241,6 +247,12 @@ metadata:
   namespace: k8zner-selfhealing-test
 spec:
   region: nbg1
+  credentialsRef:
+    name: test-credentials
+  kubernetes:
+    version: 1.34.1
+  talos:
+    version: v1.12.6
   controlPlanes:
     count: 3
     size: cpx22

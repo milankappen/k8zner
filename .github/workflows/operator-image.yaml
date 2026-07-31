@@ -6,6 +6,7 @@ on:
       - main
       - feat/*
       - refactor/*
+      - claude/*
     paths:
       - 'cmd/operator/**'
       - 'internal/operator/**'

@@ -24,6 +24,7 @@ func Root() *cobra.Command {
 	cmd.AddCommand(Doctor())
 	cmd.AddCommand(Cost())
 	cmd.AddCommand(Secrets())
+	cmd.AddCommand(Kubeconfig())
 
 	// Utility commands
 	cmd.AddCommand(Version())

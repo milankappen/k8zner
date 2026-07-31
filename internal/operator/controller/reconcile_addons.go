@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -20,6 +21,10 @@ import (
 	"github.com/milankappen/k8zner/internal/config"
 	operatorprov "github.com/milankappen/k8zner/internal/operator/provisioning"
 )
+
+// errCredentialsUnavailable marks failures loading the cluster credentials
+// so callers can report them under the CredentialsError event reason.
+var errCredentialsUnavailable = errors.New("failed to load credentials")
 
 // reconcileCNIPhase installs Cilium CNI as the first addon.
 // This must complete before any other pods can be scheduled (except hostNetwork pods).
@@ -110,6 +115,7 @@ func (r *ClusterReconciler) installAndWaitForCNI(ctx context.Context, cluster *k
 		Installed:          true,
 		Healthy:            true,
 		Phase:              k8znerv1alpha1.AddonPhaseInstalled,
+		Version:            addons.CNIVersion(cfg),
 		LastTransitionTime: &readyNow,
 		InstallOrder:       k8znerv1alpha1.AddonOrderCilium,
 		StartedAt:          &ciliumStart,
@@ -186,38 +192,73 @@ func (r *ClusterReconciler) reconcileAddonsPhase(ctx context.Context, cluster *k
 		return result, nil
 	}
 
-	creds, err := r.phaseAdapter.LoadCredentials(ctx, cluster)
+	cfg, kubeconfig, networkID, err := r.prepareAddonInputs(ctx, cluster)
 	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonCredentialsError, "Failed to load credentials")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-
-	cfg, err := operatorprov.SpecToConfig(cluster, creds)
-	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to convert spec to config")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-	cfg.HCloudToken = creds.HCloudToken
-
-	kubeconfig, err := r.getKubeconfigFromTalos(ctx, cluster, creds)
-	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to get kubeconfig")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-
-	networkID, err := r.resolveNetworkID(ctx, cluster)
-	if err != nil {
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "Failed to resolve network ID")
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-
-	if cfg.HCloudToken == "" {
-		err := fmt.Errorf("HCloud token is empty")
-		r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed, "CCM/CSI addons require valid credentials")
+		// Credential failures keep their dedicated reason so alerting that
+		// filters on CredentialsError sees them in every phase.
+		reason := EventReasonAddonsFailed
+		if errors.Is(err, errCredentialsUnavailable) {
+			reason = EventReasonCredentialsError
+		}
+		r.logAndRecordError(ctx, cluster, err, reason, "Failed to prepare addon installation")
 		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
 	}
 
 	return r.installNextAddon(ctx, cluster, cfg, kubeconfig, networkID)
+}
+
+// prepareAddonInputs assembles everything addon installation needs:
+// the expanded config (with credentials), a kubeconfig for the managed
+// cluster, and the HCloud network ID.
+func (r *ClusterReconciler) prepareAddonInputs(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster) (*config.Config, []byte, int64, error) {
+	cfg, creds, err := r.addonConfig(ctx, cluster)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	kubeconfig, networkID, err := r.addonClusterAccess(ctx, cluster, creds)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	return cfg, kubeconfig, networkID, nil
+}
+
+// addonConfig loads credentials and expands the CRD spec into the internal
+// config. Cheap: the secret read is served from the controller cache.
+func (r *ClusterReconciler) addonConfig(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster) (*config.Config, *operatorprov.Credentials, error) {
+	creds, err := r.phaseAdapter.LoadCredentials(ctx, cluster)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", errCredentialsUnavailable, err)
+	}
+
+	cfg, err := operatorprov.SpecToConfig(cluster, creds)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert spec to config: %w", err)
+	}
+	cfg.HCloudToken = creds.HCloudToken
+	if cfg.HCloudToken == "" {
+		return nil, nil, fmt.Errorf("HCloud token is empty")
+	}
+
+	return cfg, creds, nil
+}
+
+// addonClusterAccess fetches what is needed to reach the managed cluster: a
+// kubeconfig (a Talos API round-trip) and the HCloud network ID. Expensive —
+// callers should establish there is work to do before calling it.
+func (r *ClusterReconciler) addonClusterAccess(ctx context.Context, cluster *k8znerv1alpha1.K8znerCluster, creds *operatorprov.Credentials) ([]byte, int64, error) {
+	kubeconfig, err := r.getKubeconfigFromTalos(ctx, cluster, creds)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get kubeconfig: %w", err)
+	}
+
+	networkID, err := r.resolveNetworkID(ctx, cluster)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to resolve network ID: %w", err)
+	}
+
+	return kubeconfig, networkID, nil
 }
 
 // ensureWorkersReady checks if workers are ready, creating them if needed.
@@ -294,7 +335,7 @@ func (r *ClusterReconciler) installNextAddon(ctx context.Context, cluster *k8zne
 
 		installStart := metav1.Now()
 
-		if err := addons.InstallStep(ctx, step.Name, cfg, kubeconfig, networkID); err != nil {
+		if err := r.addonInstaller(ctx, step.Name, cfg, kubeconfig, networkID); err != nil {
 			r.logAndRecordError(ctx, cluster, err, EventReasonAddonsFailed,
 				fmt.Sprintf("Failed to install addon: %s", step.Name))
 			recordPhaseError(cluster, step.Name, err.Error())
@@ -326,6 +367,7 @@ func (r *ClusterReconciler) installNextAddon(ctx context.Context, cluster *k8zne
 			Installed:          true,
 			Healthy:            true,
 			Phase:              k8znerv1alpha1.AddonPhaseInstalled,
+			Version:            step.Version,
 			LastTransitionTime: &now,
 			InstallOrder:       step.Order,
 			StartedAt:          &installStart,

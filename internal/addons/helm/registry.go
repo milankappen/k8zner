@@ -12,7 +12,13 @@ var DefaultChartSpecs = map[string]ChartSpec{
 	"hcloud-csi": {
 		Repository: "https://charts.hetzner.cloud",
 		Name:       "hcloud-csi",
-		Version:    "2.18.3",
+		// 2.20.2 is the last version supporting Kubernetes 1.32 (our pinned
+		// version; v2.21.0 dropped 1.32 support) while including the volume
+		// label-length fixes from csi-driver#1304/#1328 — pre-2.20.1, any
+		// PVC/PV name over 63 chars (e.g. StatefulSet-generated names like
+		// Prometheus Operator's) made CreateVolume fail with "invalid input
+		// in field 'labels'", wedging the PVC in Pending forever.
+		Version: "2.20.2",
 	},
 	"cilium": {
 		Repository: "https://helm.cilium.io",
@@ -48,5 +54,15 @@ var DefaultChartSpecs = map[string]ChartSpec{
 		Repository: "https://prometheus-community.github.io/helm-charts",
 		Name:       "kube-prometheus-stack",
 		Version:    "72.6.2",
+	},
+	"loki": {
+		Repository: "https://grafana.github.io/helm-charts",
+		Name:       "loki",
+		Version:    "6.55.0",
+	},
+	"alloy": {
+		Repository: "https://grafana.github.io/helm-charts",
+		Name:       "alloy",
+		Version:    "1.9.0",
 	},
 }

@@ -35,6 +35,11 @@ type Spec struct {
 	// Requires CF_API_TOKEN environment variable.
 	Domain string `yaml:"domain,omitempty"`
 
+	// WildcardCertificate additionally issues a "*.{domain}" certificate via
+	// DNS01 and sets it as Traefik's default, so ingresses without an
+	// explicit TLS secret are covered. Only used when Domain is set.
+	WildcardCertificate bool `yaml:"wildcard_certificate,omitempty"`
+
 	// ArgoSubdomain is the subdomain for ArgoCD dashboard (default: "argo").
 	// When Domain is set, ArgoCD will be accessible at {ArgoSubdomain}.{Domain}.
 	// Example: with Domain="example.com" and ArgoSubdomain="argo", ArgoCD is at argo.example.com
@@ -55,6 +60,10 @@ type Spec struct {
 	// When Domain is set, Grafana will be accessible at {GrafanaSubdomain}.{Domain}.
 	// Default: false
 	Monitoring bool `yaml:"monitoring,omitempty"`
+
+	// Logging enables the Loki + Alloy log aggregation stack.
+	// Logs are kept for 168h by default and stored on a persistent volume.
+	Logging bool `yaml:"logging,omitempty"`
 
 	// GrafanaSubdomain is the subdomain for Grafana dashboard (default: "grafana").
 	// Only used when both Monitoring and Domain are set.

@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -16,8 +15,7 @@ import (
 func TestReconcileConnectivityHealth(t *testing.T) {
 	t.Parallel()
 
-	scheme := runtime.NewScheme()
-	require.NoError(t, k8znerv1alpha1.AddToScheme(scheme))
+	scheme := setupTestScheme(t)
 
 	t.Run("kube API always ready", func(t *testing.T) {
 		t.Parallel()

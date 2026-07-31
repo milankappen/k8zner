@@ -224,12 +224,14 @@ func buildClusterStatus(cfg *config.Config, infraInfo *InfrastructureInfo, boots
 // buildAddonSpec creates the addon spec from config.
 func buildAddonSpec(cfg *config.Config) *k8znerv1alpha1.AddonSpec {
 	spec := &k8znerv1alpha1.AddonSpec{
-		Traefik:       cfg.Addons.Traefik.Enabled,
-		CertManager:   cfg.Addons.CertManager.Enabled,
-		ExternalDNS:   cfg.Addons.ExternalDNS.Enabled,
-		ArgoCD:        cfg.Addons.ArgoCD.Enabled,
-		MetricsServer: cfg.Addons.MetricsServer.Enabled,
-		Monitoring:    cfg.Addons.KubePrometheusStack.Enabled,
+		Traefik:             cfg.Addons.Traefik.Enabled,
+		CertManager:         cfg.Addons.CertManager.Enabled,
+		ExternalDNS:         cfg.Addons.ExternalDNS.Enabled,
+		ArgoCD:              cfg.Addons.ArgoCD.Enabled,
+		MetricsServer:       cfg.Addons.MetricsServer.Enabled,
+		Monitoring:          cfg.Addons.KubePrometheusStack.Enabled,
+		Logging:             cfg.Addons.Logging.Enabled,
+		WildcardCertificate: cfg.Addons.CertManager.Cloudflare.WildcardCertificate,
 	}
 
 	domain := cfg.Addons.Cloudflare.Domain

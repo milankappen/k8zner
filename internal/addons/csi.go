@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,6 +14,7 @@ import (
 	"github.com/milankappen/k8zner/internal/addons/helm"
 	"github.com/milankappen/k8zner/internal/addons/k8sclient"
 	"github.com/milankappen/k8zner/internal/config"
+	"github.com/milankappen/k8zner/internal/util/labels"
 )
 
 // applyCSI installs the Hetzner Cloud CSI driver.
@@ -65,6 +68,14 @@ func buildCSIValues(cfg *config.Config) helm.Values {
 		replicas = 2
 	}
 
+	// volumeLabels tags every volume the CSI driver creates from these storage
+	// classes with the cluster's standard labels, via the driver's "labels"
+	// StorageClass parameter (comma-separated key=value pairs). Without this,
+	// CSI-provisioned Hetzner volumes carry only the driver's own fixed
+	// pvc-name/pvc-namespace/managed-by labels and are invisible to
+	// Destroy's CleanupByLabel, leaking on cluster teardown.
+	volumeLabels := buildLabelSelectorParam(labels.NewLabelBuilder(cfg.ClusterName).Build())
+
 	// Storage classes with encryption support (default values)
 	// Note: The Hetzner CSI chart already sets volumeBindingMode: WaitForFirstConsumer by default
 	storageClasses := []helm.Values{
@@ -75,12 +86,16 @@ func buildCSIValues(cfg *config.Config) helm.Values {
 			"extraParameters": helm.Values{ //nolint:gosec // G101: CSI parameter keys, not credentials
 				"csi.storage.k8s.io/node-publish-secret-name":      "hcloud-csi-secret",
 				"csi.storage.k8s.io/node-publish-secret-namespace": "kube-system",
+				"labels": volumeLabels,
 			},
 		},
 		{
 			"name":                "hcloud-volumes",
 			"defaultStorageClass": false,
 			"reclaimPolicy":       "Delete",
+			"extraParameters": helm.Values{
+				"labels": volumeLabels,
+			},
 		},
 	}
 
@@ -121,6 +136,17 @@ func buildCSIValues(cfg *config.Config) helm.Values {
 
 	// Merge custom Helm values from config
 	return helm.MergeCustomValues(values, cfg.Addons.CSI.Helm.Values)
+}
+
+// buildLabelSelectorParam formats labels as the comma-separated key=value
+// string the hcloud-csi driver's StorageClass "labels" parameter expects.
+func buildLabelSelectorParam(l map[string]string) string {
+	pairs := make([]string, 0, len(l))
+	for k, v := range l {
+		pairs = append(pairs, fmt.Sprintf("%s=%s", k, v))
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, ",")
 }
 
 // createCSISecret creates the hcloud-csi-secret for volume encryption.

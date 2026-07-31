@@ -82,11 +82,14 @@ func TestCreateCloudflareSecret(t *testing.T) {
 
 func TestExternalDNSNamespace(t *testing.T) {
 	t.Parallel()
-	namespaceYAML := helm.NamespaceManifest("external-dns", nil)
+	namespaceYAML := helm.NamespaceManifest("external-dns", withBaselinePodSecurity(nil))
 
 	assert.Contains(t, namespaceYAML, "apiVersion: v1")
 	assert.Contains(t, namespaceYAML, "kind: Namespace")
 	assert.Contains(t, namespaceYAML, "name: external-dns")
+	assert.Contains(t, namespaceYAML, "pod-security.kubernetes.io/enforce: baseline")
+	assert.Contains(t, namespaceYAML, "pod-security.kubernetes.io/audit: baseline")
+	assert.Contains(t, namespaceYAML, "pod-security.kubernetes.io/warn: baseline")
 }
 
 func TestCreateCloudflareSecret_SecretNameConstant(t *testing.T) {

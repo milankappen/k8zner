@@ -33,8 +33,9 @@ const (
 	talosConfigPath = "talosconfig"
 	kubeconfigPath  = "kubeconfig"
 
-	// k8znerNamespace is the Kubernetes namespace for k8zner resources.
-	k8znerNamespace = "k8zner-system"
+	// k8znerNamespace is the Kubernetes namespace for k8zner resources,
+	// shared with the TUI layer so both look in the same place.
+	k8znerNamespace = tui.Namespace
 
 	// credentialsSecretName is the name of the secret containing Hetzner and Talos credentials.
 	credentialsSecretName = "k8zner-credentials" //nolint:gosec // This is a secret name, not a credential value
@@ -377,6 +378,8 @@ func updateClusterSpecFromConfig(k8zCluster *k8znerv1alpha1.K8znerCluster, cfg *
 	k8zCluster.Spec.Addons.Traefik = cfg.Addons.Traefik.Enabled
 	k8zCluster.Spec.Addons.ArgoCD = cfg.Addons.ArgoCD.Enabled
 	k8zCluster.Spec.Addons.Monitoring = cfg.Addons.KubePrometheusStack.Enabled
+	k8zCluster.Spec.Addons.Logging = cfg.Addons.Logging.Enabled
+	k8zCluster.Spec.Addons.WildcardCertificate = cfg.Addons.CertManager.Cloudflare.WildcardCertificate
 
 	if cfg.Addons.TalosBackup.Enabled && cfg.Addons.TalosBackup.S3AccessKey != "" {
 		if k8zCluster.Spec.Backup == nil {

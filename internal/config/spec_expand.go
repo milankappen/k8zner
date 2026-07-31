@@ -177,9 +177,10 @@ func expandAddons(cfg *Spec, vm VersionMatrix) AddonsConfig {
 		CertManager: CertManagerConfig{
 			Enabled: true,
 			Cloudflare: CertManagerCloudflareConfig{
-				Enabled:    hasDomain,
-				Email:      cfg.GetCertEmail(),
-				Production: true, // Use production Let's Encrypt
+				Enabled:             hasDomain,
+				Email:               cfg.GetCertEmail(),
+				Production:          true, // Use production Let's Encrypt
+				WildcardCertificate: hasDomain && cfg.WildcardCertificate,
 			},
 		},
 
@@ -219,6 +220,12 @@ func expandAddons(cfg *Spec, vm VersionMatrix) AddonsConfig {
 
 		// Talos Backup - enabled only when backup is set
 		TalosBackup: expandTalosBackup(cfg),
+
+		// Logging (Loki + Alloy) - enabled only when logging is set
+		Logging: LoggingConfig{
+			Enabled:   cfg.Logging,
+			Retention: LoggingDefaultRetention,
+		},
 	}
 }
 

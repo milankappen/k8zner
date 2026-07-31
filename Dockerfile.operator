@@ -1,5 +1,6 @@
 # Build stage
-FROM golang:1.26-alpine AS builder
+# Keep in sync with the go directive in go.mod
+FROM golang:1.26.5-alpine AS builder
 
 WORKDIR /app
 

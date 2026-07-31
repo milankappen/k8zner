@@ -27,6 +27,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "k8zner-operator.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- if .Values.hostNetwork }}
       hostNetwork: true
       {{- end }}
@@ -44,6 +47,7 @@ spec:
           args:
             - --metrics-bind-address=:{{ .Values.metrics.port }}
             - --health-probe-bind-address=:{{ .Values.healthProbe.port }}
+            - --log-level={{ .Values.logLevel }}
             {{- if .Values.leaderElection.enabled }}
             - --leader-elect=true
             - --leader-election-id={{ .Values.leaderElection.resourceName }}
@@ -51,15 +55,10 @@ spec:
             - --leader-elect=false
             {{- end }}
           env:
-            - name: HCLOUD_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "k8zner-operator.credentialsSecretName" . }}
-                  key: {{ .Values.credentials.existingSecretKey }}
-            {{- if eq .Values.logLevel "debug" }}
-            - name: DEBUG
-              value: "true"
-            {{- end }}
+            # The token is mounted as a file rather than injected as an env var
+            # so it never shows up in `kubectl describe pod` or env dumps.
+            - name: HCLOUD_TOKEN_FILE
+              value: /var/run/secrets/k8zner/{{ .Values.credentials.existingSecretKey }}
             {{- if .Values.hostNetwork }}
             - name: KUBERNETES_SERVICE_HOST
               value: "localhost"
@@ -88,6 +87,9 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            - name: credentials
+              mountPath: /var/run/secrets/k8zner
+              readOnly: true
             - name: helm-cache
               mountPath: /home/nonroot/.cache
             - name: helm-config
@@ -95,6 +97,10 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: credentials
+          secret:
+            secretName: {{ include "k8zner-operator.credentialsSecretName" . }}
+            defaultMode: 288 # 0440 in decimal; YAML 1.2 parsers read 0440 as decimal 440
         - name: helm-cache
           emptyDir: {}
         - name: helm-config

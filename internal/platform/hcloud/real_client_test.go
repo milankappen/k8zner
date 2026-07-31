@@ -22,8 +22,8 @@ func TestNewRealClient_Defaults(t *testing.T) {
 	if client.httpClient == nil {
 		t.Error("expected httpClient to be initialized")
 	}
-	if client.httpClient != http.DefaultClient {
-		t.Error("expected httpClient to be http.DefaultClient by default")
+	if client.httpClient.Timeout != defaultHTTPTimeout {
+		t.Errorf("expected default httpClient timeout %v, got %v", defaultHTTPTimeout, client.httpClient.Timeout)
 	}
 }
 
@@ -93,8 +93,8 @@ func TestGetPublicIP_Success(t *testing.T) {
 	// refactoring to make the URL configurable.
 	_ = client
 
-	// Basic sanity check - the httpClient is used
-	if client.httpClient == http.DefaultClient {
+	// Basic sanity check - the injected client replaced the default
+	if client.httpClient != server.Client() {
 		t.Error("expected custom HTTP client to be used")
 	}
 }

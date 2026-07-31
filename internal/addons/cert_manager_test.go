@@ -209,9 +209,12 @@ func TestBuildCertManagerValues_GatewayAPI(t *testing.T) {
 
 func TestCertManagerNamespace(t *testing.T) {
 	t.Parallel()
-	ns := helm.NamespaceManifest("cert-manager", nil)
+	ns := helm.NamespaceManifest("cert-manager", withBaselinePodSecurity(nil))
 
 	assert.Contains(t, ns, "apiVersion: v1")
 	assert.Contains(t, ns, "kind: Namespace")
 	assert.Contains(t, ns, "name: cert-manager")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/enforce: baseline")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/audit: baseline")
+	assert.Contains(t, ns, "pod-security.kubernetes.io/warn: baseline")
 }

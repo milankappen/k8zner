@@ -478,8 +478,12 @@ func (c *RealClient) deleteVolumesByLabel(ctx context.Context, labelSelector str
 				break
 			}
 
-			// Check if volume is still attached
-			if hcloud.IsError(err, hcloud.ErrorCodeLocked) || hcloud.IsError(err, hcloud.ErrorCodeConflict) {
+			// Check if volume is still attached. Right after its server is
+			// deleted, the Hetzner API can take a moment to clear the
+			// volume's attachment state; delete attempts in that window
+			// report ErrorCodeServiceError (Hetzner has no more specific
+			// code for this case) rather than Locked/Conflict.
+			if hcloud.IsError(err, hcloud.ErrorCodeLocked) || hcloud.IsError(err, hcloud.ErrorCodeConflict) || hcloud.IsError(err, hcloud.ErrorCodeServiceError) {
 				if i < 29 {
 					log.Printf("[Cleanup] Volume %s still locked/attached, waiting...", vol.Name)
 					time.Sleep(cleanupRetryInterval)

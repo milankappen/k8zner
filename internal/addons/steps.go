@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/milankappen/k8zner/internal/addons/helm"
 	"github.com/milankappen/k8zner/internal/addons/k8sclient"
 	"github.com/milankappen/k8zner/internal/config"
 )
@@ -21,12 +22,67 @@ const (
 	StepArgoCD        = "argocd"
 	StepMonitoring    = "monitoring"
 	StepTalosBackup   = "talos-backup"
+	StepLogging       = "logging"
 )
 
-// AddonStep defines a single installable addon with its install order.
+// AddonStep defines a single installable addon with its install order and
+// the desired (chart) version resolved from configuration. The version is
+// recorded in cluster status on install and compared on later reconciles to
+// detect addons that need an upgrade.
 type AddonStep struct {
-	Name  string
-	Order int
+	Name    string
+	Order   int
+	Version string
+}
+
+// stepChart describes how a chart-backed step resolves its desired version:
+// the helm registry key plus the user-supplied overrides from config.
+// talos-backup is the one non-chart step and is handled in stepVersion.
+type stepChart struct {
+	chartName string
+	helm      func(*config.Config) config.HelmChartConfig
+}
+
+var stepCharts = map[string]stepChart{
+	StepCCM:           {"hcloud-ccm", func(c *config.Config) config.HelmChartConfig { return c.Addons.CCM.Helm }},
+	StepCSI:           {"hcloud-csi", func(c *config.Config) config.HelmChartConfig { return c.Addons.CSI.Helm }},
+	StepMetricsServer: {"metrics-server", func(c *config.Config) config.HelmChartConfig { return c.Addons.MetricsServer.Helm }},
+	StepCertManager:   {"cert-manager", func(c *config.Config) config.HelmChartConfig { return c.Addons.CertManager.Helm }},
+	StepTraefik:       {"traefik", func(c *config.Config) config.HelmChartConfig { return c.Addons.Traefik.Helm }},
+	StepExternalDNS:   {"external-dns", func(c *config.Config) config.HelmChartConfig { return c.Addons.ExternalDNS.Helm }},
+	StepArgoCD:        {"argo-cd", func(c *config.Config) config.HelmChartConfig { return c.Addons.ArgoCD.Helm }},
+	StepMonitoring:    {"kube-prometheus-stack", func(c *config.Config) config.HelmChartConfig { return c.Addons.KubePrometheusStack.Helm }},
+	// The logging step installs Loki and Alloy; the Loki chart version is
+	// what gets tracked for upgrades.
+	StepLogging: {"loki", func(c *config.Config) config.HelmChartConfig { return c.Addons.Logging.LokiHelm }},
+}
+
+// stepVersion returns the desired version for a step: the resolved helm chart
+// version for chart-backed addons, or the pinned tool version for talos-backup.
+func stepVersion(name string, cfg *config.Config) string {
+	if name == StepTalosBackup {
+		if v := cfg.Addons.TalosBackup.Version; v != "" {
+			return v
+		}
+		return talosBackupVersion()
+	}
+	// The logging step installs two charts; combine both versions so a bump
+	// to either one registers as an upgrade.
+	if name == StepLogging {
+		return helm.GetChartSpec("loki", cfg.Addons.Logging.LokiHelm).Version +
+			"+alloy-" + helm.GetChartSpec("alloy", cfg.Addons.Logging.AlloyHelm).Version
+	}
+	chart, ok := stepCharts[name]
+	if !ok {
+		return ""
+	}
+	return helm.GetChartSpec(chart.chartName, chart.helm(cfg)).Version
+}
+
+// CNIVersion returns the desired Cilium chart version. Cilium is installed in
+// the CNI phase (not via EnabledSteps) but its version is tracked the same way.
+func CNIVersion(cfg *config.Config) string {
+	return helm.GetChartSpec("cilium", cfg.Addons.Cilium.Helm).Version
 }
 
 // EnabledSteps returns the ordered list of addon steps that should be installed
@@ -34,32 +90,39 @@ type AddonStep struct {
 func EnabledSteps(cfg *config.Config) []AddonStep {
 	var steps []AddonStep
 
+	add := func(name string, order int) {
+		steps = append(steps, AddonStep{Name: name, Order: order, Version: stepVersion(name, cfg)})
+	}
+
 	if cfg.Addons.CCM.Enabled {
-		steps = append(steps, AddonStep{Name: StepCCM, Order: 2})
+		add(StepCCM, 2)
 	}
 	if cfg.Addons.CSI.Enabled {
-		steps = append(steps, AddonStep{Name: StepCSI, Order: 3})
+		add(StepCSI, 3)
 	}
 	if cfg.Addons.MetricsServer.Enabled {
-		steps = append(steps, AddonStep{Name: StepMetricsServer, Order: 4})
+		add(StepMetricsServer, 4)
 	}
 	if cfg.Addons.CertManager.Enabled {
-		steps = append(steps, AddonStep{Name: StepCertManager, Order: 5})
+		add(StepCertManager, 5)
 	}
 	if cfg.Addons.Traefik.Enabled {
-		steps = append(steps, AddonStep{Name: StepTraefik, Order: 6})
+		add(StepTraefik, 6)
 	}
 	if cfg.Addons.ExternalDNS.Enabled {
-		steps = append(steps, AddonStep{Name: StepExternalDNS, Order: 7})
+		add(StepExternalDNS, 7)
 	}
 	if cfg.Addons.ArgoCD.Enabled {
-		steps = append(steps, AddonStep{Name: StepArgoCD, Order: 8})
+		add(StepArgoCD, 8)
 	}
 	if cfg.Addons.KubePrometheusStack.Enabled {
-		steps = append(steps, AddonStep{Name: StepMonitoring, Order: 9})
+		add(StepMonitoring, 9)
 	}
 	if cfg.Addons.TalosBackup.Enabled {
-		steps = append(steps, AddonStep{Name: StepTalosBackup, Order: 10})
+		add(StepTalosBackup, 10)
+	}
+	if cfg.Addons.Logging.Enabled {
+		add(StepLogging, 11)
 	}
 
 	return steps
@@ -94,6 +157,8 @@ func InstallStep(ctx context.Context, stepName string, cfg *config.Config, kubec
 		return installMonitoringStep(ctx, client, cfg)
 	case StepTalosBackup:
 		return installTalosBackupStep(ctx, client, cfg)
+	case StepLogging:
+		return applyLogging(ctx, client, cfg)
 	default:
 		return fmt.Errorf("unknown addon step: %s", stepName)
 	}

@@ -479,8 +479,30 @@ spec:
 		"--kubeconfig", state.KubeconfigPath,
 		"delete", "pvc", pvcName).Run()
 
-	time.Sleep(10 * time.Second)
+	// Wait for the PVC to actually disappear before returning: deleting the
+	// PVC only starts CSI's DeleteVolume call asynchronously. If this test
+	// fails elsewhere in the same subtest, the enclosing test destroys the
+	// cluster (and its CSI controller) right after, which can leak the
+	// underlying Hetzner volume if it hasn't been deleted yet.
+	waitForPVCDeleted(t, state.KubeconfigPath, pvcName, 90*time.Second)
 	t.Log("  CSI volume test complete")
+}
+
+// waitForPVCDeleted polls until the named PVC in the default namespace no
+// longer exists, so its backing Hetzner volume has been released before the
+// caller proceeds (e.g. into cluster teardown).
+func waitForPVCDeleted(t *testing.T, kubeconfigPath, pvcName string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		cmd := exec.CommandContext(context.Background(), "kubectl",
+			"--kubeconfig", kubeconfigPath,
+			"get", "pvc", pvcName)
+		if err := cmd.Run(); err != nil {
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Logf("  Warning: PVC %s still present after %v, its Hetzner volume may need manual cleanup", pvcName, timeout)
 }
 
 // testCiliumNetworkConnectivity tests Cilium network connectivity.

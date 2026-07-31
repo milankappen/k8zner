@@ -1,0 +1,116 @@
+# End-to-end tests against real Hetzner Cloud infrastructure.
+#
+# Manually dispatched only: each run creates (and destroys) real servers,
+# snapshots, load balancers, and networks. Run it against a DEDICATED Hetzner
+# project — the purge step deletes every k8zner-managed resource it can find
+# in the project, which would be destructive in a shared one.
+#
+# Required repository secrets:
+#   E2E_HCLOUD_TOKEN          read/write token for the dedicated project
+# Optional (enable extra phases when present):
+#   E2E_HETZNER_S3_ACCESS_KEY / E2E_HETZNER_S3_SECRET_KEY   backup phases
+#   E2E_CF_API_TOKEN / E2E_CF_DOMAIN                        DNS/TLS phases
+name: E2E (Hetzner)
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Test suite to run
+        type: choice
+        options:
+          - full
+          - fast
+          - snapshot-only
+        default: full
+      operator_version:
+        description: Operator image tag (empty = this branch's image)
+        required: false
+        default: ""
+      purge_after:
+        description: Purge all k8zner-managed resources afterwards (dedicated project only)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Never run two E2E suites against the same project at once.
+concurrency:
+  group: e2e-hetzner
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      HCLOUD_TOKEN: ${{ secrets.E2E_HCLOUD_TOKEN }}
+      HETZNER_S3_ACCESS_KEY: ${{ secrets.E2E_HETZNER_S3_ACCESS_KEY }}
+      HETZNER_S3_SECRET_KEY: ${{ secrets.E2E_HETZNER_S3_SECRET_KEY }}
+      CF_API_TOKEN: ${{ secrets.E2E_CF_API_TOKEN }}
+      CF_DOMAIN: ${{ secrets.E2E_CF_DOMAIN }}
+    steps:
+      - name: Require E2E credentials
+        run: |
+          if [ -z "$HCLOUD_TOKEN" ]; then
+            echo "::error::E2E_HCLOUD_TOKEN repository secret is not set"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v5
+
+      - name: Resolve operator image tag
+        run: |
+          TAG="${{ inputs.operator_version }}"
+          if [ -z "$TAG" ]; then
+            # docker/metadata-action sanitizes branch names the same way
+            TAG=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
+          fi
+          echo "K8ZNER_OPERATOR_VERSION=${TAG}" >> "$GITHUB_ENV"
+          echo "Using operator image tag: ${TAG}"
+
+      - name: Verify operator image exists
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/k8zner-operator:${K8ZNER_OPERATOR_VERSION}"
+          if ! docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "::error::Operator image ${IMAGE} not found. Push to a branch covered by the operator-image workflow first, or pass operator_version explicitly."
+            exit 1
+          fi
+
+      - name: Run E2E suite (${{ inputs.suite }})
+        run: |
+          set -o pipefail
+          case "${{ inputs.suite }}" in
+            full)          make e2e 2>&1 | tee e2e.log ;;
+            fast)          make e2e-fast 2>&1 | tee e2e.log ;;
+            snapshot-only) make e2e-snapshot-only 2>&1 | tee e2e.log ;;
+          esac
+
+      - name: Upload E2E log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-log-${{ github.run_id }}
+          path: e2e.log
+          retention-days: 14
+
+      # Belt-and-braces: the suite cleans up after itself, but an aborted run
+      # (timeout, runner death) can leave billable servers behind. Safe only
+      # because the project is dedicated to E2E.
+      - name: Purge k8zner-managed resources
+        if: always() && inputs.purge_after
+        run: |
+          go run ./cmd/cleanup -label k8zner.io/managed-by=k8zner || true
+          go run ./cmd/cleanup -label k8zner.io/managed-by=k8zner-operator || true
+          go run ./cmd/cleanup -label managed-by=k8zner || true

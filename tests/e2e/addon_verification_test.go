@@ -25,6 +25,15 @@ type AddonVerificationContext struct {
 	Domain         string
 	ArgoHost       string
 	GrafanaHost    string
+	// HasBackup indicates whether the cluster was configured with the TalosBackup
+	// addon (requires HETZNER_S3_ACCESS_KEY/HETZNER_S3_SECRET_KEY). When false,
+	// backup-specific checks are skipped.
+	HasBackup bool
+}
+
+// hasDomain reports whether DNS/TLS integration (Cloudflare) is configured for this cluster.
+func (v *AddonVerificationContext) hasDomain() bool {
+	return v.Domain != ""
 }
 
 // =============================================================================
@@ -179,22 +188,38 @@ func VerifyAllAddonsCore(t *testing.T, ctx context.Context, vctx *AddonVerificat
 
 	// CertManager
 	t.Log("  [Core] Verifying CertManager...")
-	verifyClusterIssuerExists(t, vctx.KubeconfigPath, "letsencrypt-cloudflare-staging")
 	waitForPod(t, vctx.KubeconfigPath, "cert-manager", "app.kubernetes.io/name=cert-manager", 5*time.Minute)
+	if vctx.hasDomain() {
+		verifyClusterIssuerExists(t, vctx.KubeconfigPath, "letsencrypt-cloudflare-staging")
+	} else {
+		t.Log("  [Core] Skipping ClusterIssuer check (no domain configured, CF_API_TOKEN/CF_DOMAIN unset)")
+	}
 
-	// ExternalDNS
-	t.Log("  [Core] Verifying ExternalDNS...")
-	waitForPod(t, vctx.KubeconfigPath, "external-dns", "app.kubernetes.io/name=external-dns", 5*time.Minute)
+	// ExternalDNS (only installed when a domain is configured)
+	if vctx.hasDomain() {
+		t.Log("  [Core] Verifying ExternalDNS...")
+		waitForPod(t, vctx.KubeconfigPath, "external-dns", "app.kubernetes.io/name=external-dns", 5*time.Minute)
+	} else {
+		t.Log("  [Core] Skipping ExternalDNS (no domain configured, CF_API_TOKEN/CF_DOMAIN unset)")
+	}
 
-	// ArgoCD (pod + ingress)
+	// ArgoCD (pod always; ingress only when a domain is configured)
 	t.Log("  [Core] Verifying ArgoCD...")
 	waitForPod(t, vctx.KubeconfigPath, "argocd", "app.kubernetes.io/name=argocd-server", 5*time.Minute)
-	verifyArgoCDIngressConfigured(t, vctx.KubeconfigPath, vctx.ArgoHost)
+	if vctx.hasDomain() {
+		verifyArgoCDIngressConfigured(t, vctx.KubeconfigPath, vctx.ArgoHost)
+	} else {
+		t.Log("  [Core] Skipping ArgoCD ingress check (no domain configured)")
+	}
 
-	// Grafana (pod + ingress)
+	// Grafana (pod always; ingress only when a domain is configured)
 	t.Log("  [Core] Verifying Grafana...")
 	waitForPod(t, vctx.KubeconfigPath, "monitoring", "app.kubernetes.io/name=grafana", 5*time.Minute)
-	verifyGrafanaIngressExists(t, vctx.KubeconfigPath, vctx.GrafanaHost)
+	if vctx.hasDomain() {
+		verifyGrafanaIngressExists(t, vctx.KubeconfigPath, vctx.GrafanaHost)
+	} else {
+		t.Log("  [Core] Skipping Grafana ingress check (no domain configured)")
+	}
 
 	// Prometheus
 	t.Log("  [Core] Verifying Prometheus...")
@@ -206,9 +231,13 @@ func VerifyAllAddonsCore(t *testing.T, ctx context.Context, vctx *AddonVerificat
 	t.Log("  [Core] Verifying Alertmanager...")
 	waitForAlertmanagerReady(t, vctx.KubeconfigPath, 5*time.Minute)
 
-	// Backup (CronJob only)
-	t.Log("  [Core] Verifying Backup...")
-	verifyBackupCronJob(t, vctx.KubeconfigPath, "0 * * * *")
+	// Backup (CronJob only, when configured)
+	if vctx.HasBackup {
+		t.Log("  [Core] Verifying Backup...")
+		verifyBackupCronJob(t, vctx.KubeconfigPath, "0 * * * *")
+	} else {
+		t.Log("  [Core] Skipping Backup (HETZNER_S3_ACCESS_KEY/HETZNER_S3_SECRET_KEY unset)")
+	}
 
 	t.Log("  [Core] All addon core verification passed!")
 }
@@ -218,6 +247,10 @@ func VerifyAllAddonsCore(t *testing.T, ctx context.Context, vctx *AddonVerificat
 // (DNS propagation, Let's Encrypt cert issuance) which can be slow/flaky.
 func VerifyExternalConnectivity(t *testing.T, vctx *AddonVerificationContext, state *OperatorTestContext) {
 	t.Helper()
+
+	if !vctx.hasDomain() {
+		t.Skip("Skipping external connectivity checks: no domain configured (CF_API_TOKEN/CF_DOMAIN unset)")
+	}
 
 	legacyState := state.ToE2EState()
 

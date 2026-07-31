@@ -3,9 +3,9 @@
 package kind
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -24,181 +24,27 @@ func TestKindOperator(t *testing.T) {
 	})
 }
 
-// testOperatorCRDInstallation installs the K8znerCluster CRD.
+// testOperatorCRDInstallation installs the K8znerCluster CRD from the
+// canonical manifest in config/crd/bases so the test always exercises the
+// schema that ships with the operator.
 func testOperatorCRDInstallation(t *testing.T) {
 	if fw.IsInstalled("k8zner-crd") {
 		t.Log("Already installed, skipping")
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	crdManifest, err := os.ReadFile("../../config/crd/bases/k8zner.io_k8znerclusters.yaml")
+	if err != nil {
+		t.Fatalf("Failed to read canonical CRD manifest: %v", err)
+	}
 
-	// Apply the CRD from the deploy directory
-	crdManifest := `---
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: k8znerclusters.k8zner.io
-  annotations:
-    controller-gen.kubebuilder.io/version: v0.14.0
-spec:
-  group: k8zner.io
-  names:
-    kind: K8znerCluster
-    listKind: K8znerClusterList
-    plural: k8znerclusters
-    singular: k8znercluster
-    shortNames:
-      - k8z
-  scope: Namespaced
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources:
-        status: {}
-      additionalPrinterColumns:
-        - name: Phase
-          type: string
-          jsonPath: .status.phase
-        - name: CPs
-          type: string
-          jsonPath: .status.controlPlanes.ready
-        - name: Workers
-          type: string
-          jsonPath: .status.workers.ready
-        - name: Age
-          type: date
-          jsonPath: .metadata.creationTimestamp
-      schema:
-        openAPIV3Schema:
-          type: object
-          description: K8znerCluster is the Schema for the k8znerclusters API.
-          properties:
-            apiVersion:
-              type: string
-            kind:
-              type: string
-            metadata:
-              type: object
-            spec:
-              type: object
-              description: K8znerClusterSpec defines the desired state of a K8zner-managed cluster.
-              required:
-                - region
-                - controlPlanes
-                - workers
-              properties:
-                region:
-                  type: string
-                  description: Region is the Hetzner Cloud region
-                  enum: [fsn1, nbg1, hel1, ash, hil]
-                controlPlanes:
-                  type: object
-                  description: ControlPlanes defines the control plane configuration
-                  required:
-                    - count
-                    - size
-                  properties:
-                    count:
-                      type: integer
-                      description: Number of control plane nodes
-                      enum: [1, 3, 5]
-                      default: 1
-                    size:
-                      type: string
-                      description: Hetzner server type
-                      default: cx23
-                workers:
-                  type: object
-                  description: Workers defines the worker node configuration
-                  required:
-                    - count
-                    - size
-                  properties:
-                    count:
-                      type: integer
-                      description: Desired number of worker nodes
-                      minimum: 1
-                      maximum: 100
-                    size:
-                      type: string
-                      description: Hetzner server type
-                      default: cx23
-                    minCount:
-                      type: integer
-                      description: Minimum number of workers
-                      minimum: 0
-                      default: 1
-                    maxCount:
-                      type: integer
-                      description: Maximum number of workers
-                      maximum: 100
-                      default: 10
-                paused:
-                  type: boolean
-                  description: Stops the operator from reconciling this cluster
-                  default: false
-            status:
-              type: object
-              description: K8znerClusterStatus defines the observed state of K8znerCluster.
-              properties:
-                phase:
-                  type: string
-                  description: Current phase of the cluster
-                  enum: [Pending, Provisioning, Running, Degraded, Healing, Failed]
-                controlPlanes:
-                  type: object
-                  properties:
-                    total:
-                      type: integer
-                    ready:
-                      type: integer
-                    unhealthy:
-                      type: integer
-                workers:
-                  type: object
-                  properties:
-                    total:
-                      type: integer
-                    ready:
-                      type: integer
-                    unhealthy:
-                      type: integer
-                conditions:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      type:
-                        type: string
-                      status:
-                        type: string
-                      lastTransitionTime:
-                        type: string
-                        format: date-time
-                      reason:
-                        type: string
-                      message:
-                        type: string
-                lastReconcileTime:
-                  type: string
-                  format: date-time
-                observedGeneration:
-                  type: integer
-                  format: int64
-`
-
-	fw.KubectlApply(t, crdManifest)
+	fw.KubectlApply(t, string(crdManifest))
 
 	// Wait for CRD to be established
 	fw.WaitForCRD(t, "k8znerclusters.k8zner.io", 30*time.Second)
 
 	fw.MarkInstalled("k8zner-crd")
 	t.Log("✓ K8znerCluster CRD installed")
-
-	_ = ctx // context for future use
 }
 
 // testOperatorCRDValidation tests that the CRD schema validation works.
@@ -212,6 +58,12 @@ metadata:
   namespace: default
 spec:
   region: invalid-region
+  credentialsRef:
+    name: test-credentials
+  kubernetes:
+    version: 1.34.1
+  talos:
+    version: v1.12.6
   controlPlanes:
     count: 1
     size: cx23
@@ -239,6 +91,12 @@ metadata:
   namespace: default
 spec:
   region: fsn1
+  credentialsRef:
+    name: test-credentials
+  kubernetes:
+    version: 1.34.1
+  talos:
+    version: v1.12.6
   controlPlanes:
     count: 2
     size: cx23
@@ -276,6 +134,12 @@ metadata:
   namespace: k8zner-test
 spec:
   region: fsn1
+  credentialsRef:
+    name: test-credentials
+  kubernetes:
+    version: 1.34.1
+  talos:
+    version: v1.12.6
   controlPlanes:
     count: 1
     size: cx23
@@ -306,13 +170,24 @@ spec:
 		t.Errorf("Expected region fsn1, got %v", spec["region"])
 	}
 
+	// Region and credentialsRef are guarded by CEL immutability rules.
+	if _, err := fw.Kubectl("patch", "k8znercluster", "-n", "k8zner-test", "test-cluster",
+		"--type=merge", "-p", `{"spec":{"region":"nbg1"}}`); err == nil {
+		t.Error("Expected region change to be rejected by CEL validation, but patch succeeded")
+	}
+
+	if _, err := fw.Kubectl("patch", "k8znercluster", "-n", "k8zner-test", "test-cluster",
+		"--type=merge", "-p", `{"spec":{"credentialsRef":{"name":"other-credentials"}}}`); err == nil {
+		t.Error("Expected credentialsRef change to be rejected by CEL validation, but patch succeeded")
+	}
+
 	t.Log("✓ K8znerCluster resource created successfully")
 }
 
 // testOperatorStatusSubresource tests that the status subresource works.
 func testOperatorStatusSubresource(t *testing.T) {
 	// Update status using kubectl patch
-	statusPatch := `{"status":{"phase":"Pending","controlPlanes":{"total":1,"ready":0,"unhealthy":0},"workers":{"total":2,"ready":0,"unhealthy":0}}}`
+	statusPatch := `{"status":{"phase":"Provisioning","controlPlanes":{"total":1,"ready":0,"unhealthy":0},"workers":{"total":2,"ready":0,"unhealthy":0}}}`
 
 	_, err := fw.Kubectl("patch", "k8znercluster", "-n", "k8zner-test", "test-cluster",
 		"--type=merge", "--subresource=status", "-p", statusPatch)
@@ -336,8 +211,8 @@ func testOperatorStatusSubresource(t *testing.T) {
 		t.Fatal("Cluster has no status after patch")
 	}
 
-	if status["phase"] != "Pending" {
-		t.Errorf("Expected phase Pending, got %v", status["phase"])
+	if status["phase"] != "Provisioning" {
+		t.Errorf("Expected phase Provisioning, got %v", status["phase"])
 	}
 
 	// Test status update to Running

@@ -55,7 +55,7 @@ func RunDoctorTUI(ctx context.Context, k8sClient client.Client, clusterName stri
 func fetchDoctorStatus(ctx context.Context, k8sClient client.Client, clusterName string) (CRDStatusMsg, bool) {
 	cluster := &k8znerv1alpha1.K8znerCluster{}
 	key := client.ObjectKey{
-		Namespace: "k8zner-system",
+		Namespace: Namespace,
 		Name:      clusterName,
 	}
 

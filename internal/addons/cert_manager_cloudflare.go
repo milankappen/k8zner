@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"text/template"
 	"time"
 
@@ -57,6 +58,56 @@ func applyCertManagerCloudflare(ctx context.Context, client k8sclient.Client, cf
 		log.Println("Skipping production ClusterIssuer (no email provided - staging certificates only)")
 	}
 
+	return nil
+}
+
+// cloudflareIssuerName returns the ClusterIssuer that applyCertManagerCloudflare
+// created: production when an email is configured, otherwise staging only.
+func cloudflareIssuerName(cfCfg config.CertManagerCloudflareConfig) string {
+	if cfCfg.Email != "" {
+		return "letsencrypt-cloudflare-production"
+	}
+	return "letsencrypt-cloudflare-staging"
+}
+
+// applyWildcardCertificate requests one DNS01 certificate for "*.{domain}" and
+// makes it Traefik's default via a TLSStore, so ingresses without an explicit
+// TLS secret are covered. It must run in the traefik step: the TLSStore CRD
+// ships with the Traefik chart, which installs after cert-manager.
+func applyWildcardCertificate(ctx context.Context, client k8sclient.Client, cfg *config.Config) error {
+	cfCfg := cfg.Addons.CertManager.Cloudflare
+	domain := cfg.Addons.Cloudflare.Domain
+	if !cfCfg.WildcardCertificate || domain == "" {
+		return nil
+	}
+
+	issuerName := cloudflareIssuerName(cfCfg)
+	certManifest, err := buildWildcardCertManifest(domain, issuerName)
+	if err != nil {
+		return fmt.Errorf("failed to build wildcard certificate manifest: %w", err)
+	}
+	if err := applyManifests(ctx, client, "wildcard-certificate", certManifest); err != nil {
+		return fmt.Errorf("failed to apply wildcard certificate: %w", err)
+	}
+	log.Printf("Wildcard certificate for *.%s requested via %s", domain, issuerName)
+
+	// The TLSStore CRD was installed by the Traefik chart moments ago; give
+	// discovery a moment to catch up. If it never appears (e.g. a custom
+	// chart without CRDs), degrade to a warning instead of failing the step:
+	// the certificate above still exists for explicit ingress TLS use.
+	if err := waitForResource(ctx, func(ctx context.Context) (bool, error) {
+		return client.HasCRD(ctx, "traefik.io/v1alpha1/TLSStore")
+	}, DefaultResourceWaitTime, "Traefik TLSStore CRD"); err != nil {
+		log.Printf("WARNING: %v - wildcard certificate issued but not set as Traefik default", err)
+		return nil
+	}
+	if err := client.RefreshDiscovery(ctx); err != nil {
+		log.Printf("Warning: failed to refresh discovery before applying TLSStore: %v", err)
+	}
+
+	if err := applyManifests(ctx, client, "wildcard-tlsstore", buildTLSStoreManifest()); err != nil {
+		return fmt.Errorf("failed to apply default TLSStore: %w", err)
+	}
 	return nil
 }
 
@@ -236,4 +287,69 @@ spec:
           apiTokenSecretRef:
             name: {{ .SecretName }}
             key: {{ .SecretKey }}
+`
+
+// buildWildcardCertManifest renders a cert-manager Certificate for
+// "*.{domain}" in the traefik namespace.
+func buildWildcardCertManifest(domain, issuerName string) ([]byte, error) {
+	data := wildcardCertData{
+		Name:       "wildcard-" + strings.ReplaceAll(domain, ".", "-"),
+		Domain:     domain,
+		IssuerName: issuerName,
+		SecretName: wildcardTLSSecretName,
+	}
+
+	tmpl, err := template.New("wildcardcert").Parse(wildcardCertTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse wildcard certificate template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("failed to execute wildcard certificate template: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// buildTLSStoreManifest renders the Traefik default TLSStore pointing at the
+// wildcard certificate secret.
+func buildTLSStoreManifest() []byte {
+	return []byte(`apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: traefik
+spec:
+  defaultCertificate:
+    secretName: ` + wildcardTLSSecretName + `
+`)
+}
+
+// wildcardTLSSecretName is where cert-manager stores the wildcard certificate
+// and where the default TLSStore looks for it.
+const wildcardTLSSecretName = "wildcard-tls"
+
+// wildcardCertData holds the data for rendering the wildcard certificate template.
+type wildcardCertData struct {
+	Name       string
+	Domain     string
+	IssuerName string
+	SecretName string
+}
+
+// wildcardCertTemplate renders the wildcard Certificate.
+const wildcardCertTemplate = `apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Name }}
+  namespace: traefik
+spec:
+  secretName: {{ .SecretName }}
+  dnsNames:
+    - "*.{{ .Domain }}"
+    - "{{ .Domain }}"
+  issuerRef:
+    name: {{ .IssuerName }}
+    kind: ClusterIssuer
 `

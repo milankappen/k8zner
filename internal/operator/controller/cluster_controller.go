@@ -4,6 +4,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -16,12 +17,16 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
+	"github.com/milankappen/k8zner/internal/addons"
+	"github.com/milankappen/k8zner/internal/config"
 	operatorprov "github.com/milankappen/k8zner/internal/operator/provisioning"
 	"github.com/milankappen/k8zner/internal/platform/hcloud"
 )
@@ -110,6 +115,10 @@ type ClusterReconciler struct {
 	// Defaults to waitForK8sNodeReady. Can be overridden in tests.
 	nodeReadyWaiter func(ctx context.Context, nodeName string, timeout time.Duration) error
 
+	// addonInstaller installs or upgrades a single addon step.
+	// Defaults to addons.InstallStep. Can be overridden in tests.
+	addonInstaller func(ctx context.Context, stepName string, cfg *config.Config, kubeconfig []byte, networkID int64) error
+
 	// Provisioning adapter for operator-driven provisioning.
 	phaseAdapter *operatorprov.PhaseAdapter
 
@@ -183,6 +192,14 @@ func WithNodeReadyWaiter(waiter func(ctx context.Context, nodeName string, timeo
 	}
 }
 
+// WithAddonInstaller sets a custom addon install function.
+// This is primarily used for testing to avoid installing real addons.
+func WithAddonInstaller(installer func(ctx context.Context, stepName string, cfg *config.Config, kubeconfig []byte, networkID int64) error) Option {
+	return func(r *ClusterReconciler) {
+		r.addonInstaller = installer
+	}
+}
+
 // NewClusterReconciler creates a new ClusterReconciler with the given options.
 func NewClusterReconciler(c client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, opts ...Option) *ClusterReconciler {
 	r := &ClusterReconciler{
@@ -203,6 +220,11 @@ func NewClusterReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 		r.nodeReadyWaiter = r.waitForK8sNodeReady
 	}
 
+	// Set default addonInstaller if not overridden
+	if r.addonInstaller == nil {
+		r.addonInstaller = addons.InstallStep
+	}
+
 	return r
 }
 
@@ -218,6 +240,8 @@ func (r *ClusterReconciler) ensureHCloudClient() error {
 	return nil
 }
 
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=create
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;update;patch,resourceNames=k8znerclusters.k8zner.io
 // +kubebuilder:rbac:groups=k8zner.io,resources=k8znerclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8zner.io,resources=k8znerclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=k8zner.io,resources=k8znerclusters/finalizers,verbs=update
@@ -251,6 +275,16 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 		logger.Error(err, "unable to fetch K8znerCluster")
 		return ctrl.Result{}, err
+	}
+
+	// The operator does not register a finalizer: deleting a K8znerCluster
+	// intentionally leaves cloud infrastructure intact (tear-down is an
+	// explicit action via `k8zner destroy` or the cleanup utility). Skip
+	// reconciliation so a deleting cluster is not provisioned or healed
+	// while the object disappears.
+	if !cluster.DeletionTimestamp.IsZero() {
+		logger.Info("cluster is being deleted, skipping reconciliation")
+		return ctrl.Result{}, nil
 	}
 
 	// Check if paused
@@ -327,7 +361,11 @@ func (r *ClusterReconciler) updateStatusWithRetry(ctx context.Context, cluster *
 		}
 		cluster = latest
 
-		time.Sleep(statusRetryInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(statusRetryInterval):
+		}
 	}
 
 	return fmt.Errorf("failed to update status after %d retries", statusUpdateRetries)
@@ -560,12 +598,45 @@ func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&k8znerv1alpha1.K8znerCluster{}).
-		Watches(&corev1.Node{}, &nodeEventHandler{}).
+		Watches(&corev1.Node{}, &nodeEventHandler{client: mgr.GetClient()},
+			builder.WithPredicates(nodeChangePredicate())).
 		Complete(r)
 }
 
+// nodeChangePredicate filters node update events down to changes that can
+// affect reconciliation: readiness transitions, schedulability, labels, and
+// deletion. Without it, every kubelet heartbeat (one status update per node
+// every ~10s) re-enqueues the cluster and floods the workqueue.
+func nodeChangePredicate() predicate.Funcs {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldNode, okOld := e.ObjectOld.(*corev1.Node)
+			newNode, okNew := e.ObjectNew.(*corev1.Node)
+			if !okOld || !okNew {
+				return true
+			}
+			return nodeReadyStatus(oldNode) != nodeReadyStatus(newNode) ||
+				oldNode.Spec.Unschedulable != newNode.Spec.Unschedulable ||
+				oldNode.DeletionTimestamp.IsZero() != newNode.DeletionTimestamp.IsZero() ||
+				!maps.Equal(oldNode.Labels, newNode.Labels)
+		},
+	}
+}
+
+// nodeReadyStatus returns the status of the node's Ready condition.
+func nodeReadyStatus(node *corev1.Node) corev1.ConditionStatus {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			return cond.Status
+		}
+	}
+	return corev1.ConditionUnknown
+}
+
 // nodeEventHandler handles node events and triggers reconciliation.
-type nodeEventHandler struct{}
+type nodeEventHandler struct {
+	client client.Client
+}
 
 // Create enqueues the cluster for reconciliation on node creation.
 func (h *nodeEventHandler) Create(ctx context.Context, e event.CreateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
@@ -588,12 +659,20 @@ func (h *nodeEventHandler) Generic(ctx context.Context, e event.GenericEvent, q 
 }
 
 func (h *nodeEventHandler) enqueueCluster(ctx context.Context, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-	// Enqueue all K8znerCluster resources in the k8zner-system namespace
-	// In a real implementation, we'd look up which cluster owns this node
-	q.Add(reconcile.Request{
-		NamespacedName: types.NamespacedName{
-			Namespace: "k8zner-system",
-			Name:      "cluster",
-		},
-	})
+	// Node objects carry no owner reference back to a K8znerCluster, so
+	// enqueue every cluster and let each reconcile sort out relevance.
+	// In practice a management cluster hosts a single K8znerCluster.
+	clusters := &k8znerv1alpha1.K8znerClusterList{}
+	if err := h.client.List(ctx, clusters); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list K8znerClusters for node event")
+		return
+	}
+	for i := range clusters.Items {
+		q.Add(reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: clusters.Items[i].Namespace,
+				Name:      clusters.Items[i].Name,
+			},
+		})
+	}
 }

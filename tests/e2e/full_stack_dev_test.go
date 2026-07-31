@@ -68,49 +68,70 @@ func TestE2EFullStackDev(t *testing.T) {
 		t.Skip("HCLOUD_TOKEN not set, skipping E2E test")
 	}
 
+	// CF_API_TOKEN/CF_DOMAIN and HETZNER_S3_* are optional: when absent, the
+	// corresponding addon phases (DNS/TLS ingress, etcd backup) are skipped
+	// rather than skipping the whole test, so core provisioning and addon
+	// installation are still validated on every run.
 	cfAPIToken := os.Getenv("CF_API_TOKEN")
 	cfDomain := os.Getenv("CF_DOMAIN")
-	if cfAPIToken == "" || cfDomain == "" {
-		t.Skip("CF_API_TOKEN and CF_DOMAIN required for full stack test")
-	}
+	hasDomain := cfAPIToken != "" && cfDomain != ""
 
 	s3AccessKey := os.Getenv("HETZNER_S3_ACCESS_KEY")
 	s3SecretKey := os.Getenv("HETZNER_S3_SECRET_KEY")
-	if s3AccessKey == "" || s3SecretKey == "" {
-		t.Skip("HETZNER_S3_ACCESS_KEY and HETZNER_S3_SECRET_KEY required for backup test")
-	}
+	hasBackup := s3AccessKey != "" && s3SecretKey != ""
 
 	// Generate unique identifiers (short cluster names for Hetzner resource limits)
 	clusterName := naming.E2ECluster(naming.E2EFullStack) // e.g., e2e-fs-abc12
 	clusterID := clusterName[len(naming.E2EFullStack)+1:] // Extract the 5-char ID
-	argoSubdomain := "argo-" + clusterID
-	grafanaSubdomain := "grafana-" + clusterID
-	argoHost := fmt.Sprintf("%s.%s", argoSubdomain, cfDomain)
-	grafanaHost := fmt.Sprintf("%s.%s", grafanaSubdomain, cfDomain)
-
-	t.Logf("=== Starting Full Stack Dev E2E Test: %s ===", clusterName)
-	t.Logf("=== ArgoCD: https://%s ===", argoHost)
-	t.Logf("=== Grafana: https://%s ===", grafanaHost)
-
-	// Create S3 client for backup verification
-	region := "fsn1"
-	bucketName := clusterName + "-etcd-backups"
-	endpoint := fmt.Sprintf("https://%s.your-objectstorage.com", region)
-	s3Client, err := s3.NewClient(endpoint, region, s3AccessKey, s3SecretKey)
-	if err != nil {
-		t.Fatalf("Failed to create S3 client: %v", err)
+	var argoSubdomain, grafanaSubdomain, argoHost, grafanaHost string
+	if hasDomain {
+		argoSubdomain = "argo-" + clusterID
+		grafanaSubdomain = "grafana-" + clusterID
+		argoHost = fmt.Sprintf("%s.%s", argoSubdomain, cfDomain)
+		grafanaHost = fmt.Sprintf("%s.%s", grafanaSubdomain, cfDomain)
 	}
 
-	// Create configuration with ALL addons enabled
-	configPath := CreateTestConfig(t, clusterName, ModeDev,
+	t.Logf("=== Starting Full Stack Dev E2E Test: %s ===", clusterName)
+	if hasDomain {
+		t.Logf("=== ArgoCD: https://%s ===", argoHost)
+		t.Logf("=== Grafana: https://%s ===", grafanaHost)
+	} else {
+		t.Log("=== CF_API_TOKEN/CF_DOMAIN not set: DNS/TLS ingress phases will be skipped ===")
+	}
+	if !hasBackup {
+		t.Log("=== HETZNER_S3_ACCESS_KEY/HETZNER_S3_SECRET_KEY not set: backup phase will be skipped ===")
+	}
+
+	// Create S3 client for backup verification (only when backup creds are available)
+	region := "fsn1"
+	bucketName := clusterName + "-etcd-backups"
+	var s3Client *s3.Client
+	if hasBackup {
+		endpoint := fmt.Sprintf("https://%s.your-objectstorage.com", region)
+		var err error
+		s3Client, err = s3.NewClient(endpoint, region, s3AccessKey, s3SecretKey)
+		if err != nil {
+			t.Fatalf("Failed to create S3 client: %v", err)
+		}
+	}
+
+	// Create configuration with all available addons enabled
+	configOpts := []ConfigOption{
 		WithWorkers(1),
 		WithRegion(region),
-		WithDomain(cfDomain),
-		WithArgoSubdomain(argoSubdomain),
-		WithGrafanaSubdomain(grafanaSubdomain),
-		WithBackup(true),
 		WithMonitoring(true),
-	)
+	}
+	if hasDomain {
+		configOpts = append(configOpts,
+			WithDomain(cfDomain),
+			WithArgoSubdomain(argoSubdomain),
+			WithGrafanaSubdomain(grafanaSubdomain),
+		)
+	}
+	if hasBackup {
+		configOpts = append(configOpts, WithBackup(true))
+	}
+	configPath := CreateTestConfig(t, clusterName, ModeDev, configOpts...)
 	defer os.Remove(configPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
@@ -122,9 +143,11 @@ func TestE2EFullStackDev(t *testing.T) {
 	// Cleanup handlers
 	defer func() {
 		// Clean S3 bucket
-		t.Log("Cleaning up S3 bucket...")
-		if cleanupErr := cleanupS3Bucket(context.Background(), s3Client, bucketName); cleanupErr != nil {
-			t.Logf("Warning: failed to cleanup bucket: %v", cleanupErr)
+		if hasBackup {
+			t.Log("Cleaning up S3 bucket...")
+			if cleanupErr := cleanupS3Bucket(context.Background(), s3Client, bucketName); cleanupErr != nil {
+				t.Logf("Warning: failed to cleanup bucket: %v", cleanupErr)
+			}
 		}
 
 		// Destroy cluster
@@ -183,10 +206,13 @@ func TestE2EFullStackDev(t *testing.T) {
 			Domain:         cfDomain,
 			ArgoHost:       argoHost,
 			GrafanaHost:    grafanaHost,
+			HasBackup:      hasBackup,
 		}
 		VerifyAllAddonsCore(t, ctx, vctx, state)
 
-		// Validate via doctor JSON (wait for operator to populate all health fields)
+		// Validate via doctor JSON (wait for operator to populate all health fields).
+		// ExternalDNS and TalosBackup are only installed when the corresponding
+		// optional credentials (CF_API_TOKEN/CF_DOMAIN, HETZNER_S3_*) are set.
 		expectedAddons := []string{
 			k8znerv1alpha1.AddonNameCilium,
 			k8znerv1alpha1.AddonNameCCM,
@@ -194,10 +220,14 @@ func TestE2EFullStackDev(t *testing.T) {
 			k8znerv1alpha1.AddonNameMetricsServer,
 			k8znerv1alpha1.AddonNameTraefik,
 			k8znerv1alpha1.AddonNameCertManager,
-			k8znerv1alpha1.AddonNameExternalDNS,
 			k8znerv1alpha1.AddonNameArgoCD,
 			k8znerv1alpha1.AddonNameMonitoring,
-			k8znerv1alpha1.AddonNameTalosBackup,
+		}
+		if hasDomain {
+			expectedAddons = append(expectedAddons, k8znerv1alpha1.AddonNameExternalDNS)
+		}
+		if hasBackup {
+			expectedAddons = append(expectedAddons, k8znerv1alpha1.AddonNameTalosBackup)
 		}
 		WaitForDoctorHealthy(t, configPath, 5*time.Minute, func(status *handlers.DoctorStatus) error {
 			if status.Phase != "Running" {
@@ -245,6 +275,9 @@ func TestE2EFullStackDev(t *testing.T) {
 	// and Let's Encrypt which can be unreliable.
 	// =========================================================================
 	t.Run("04_VerifyConnectivity", func(t *testing.T) {
+		if !hasDomain {
+			t.Skip("Skipping: CF_API_TOKEN/CF_DOMAIN not set")
+		}
 		if !allSubtestsPassed || state == nil {
 			t.Skip("Skipping: previous subtest failed")
 		}
@@ -261,6 +294,10 @@ func TestE2EFullStackDev(t *testing.T) {
 	// SUBTEST 05: Verify Backup (trigger + S3 verification)
 	// =========================================================================
 	runSubtest("05_VerifyBackup", func(t *testing.T) {
+		if !hasBackup {
+			t.Skip("Skipping: HETZNER_S3_ACCESS_KEY/HETZNER_S3_SECRET_KEY not set")
+		}
+
 		// Trigger manual backup
 		triggerBackupJob(t, state.KubeconfigPath, 5*time.Minute)
 

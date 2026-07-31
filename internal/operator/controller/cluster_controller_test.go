@@ -11,9 +11,13 @@ import (
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -30,6 +34,17 @@ func setupTestScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, k8znerv1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, batchv1.AddToScheme(scheme))
+
+	// Pre-register the unstructured APIService kind that the connectivity
+	// and monitoring health probes Get. The fake client otherwise registers
+	// unknown unstructured kinds into the scheme at request time, which
+	// races when parallel subtests share a scheme.
+	gv := schema.GroupVersion{Group: "apiregistration.k8s.io", Version: "v1"}
+	scheme.AddKnownTypeWithName(gv.WithKind("APIService"), &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(gv.WithKind("APIServiceList"), &unstructured.UnstructuredList{})
+	metav1.AddToGroupVersion(scheme, gv)
 	return scheme
 }
 
@@ -135,6 +150,40 @@ func TestClusterReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{
 				Namespace: "default",
 				Name:      "nonexistent",
+			},
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+	})
+
+	t.Run("deleting cluster skips reconciliation", func(t *testing.T) {
+		t.Parallel()
+		scheme := setupTestScheme(t)
+		cluster := &k8znerv1alpha1.K8znerCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "test-cluster",
+				Namespace:         "default",
+				DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				Finalizers:        []string{"test.k8zner.io/keep"},
+			},
+		}
+
+		client := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			WithStatusSubresource(cluster).
+			Build()
+		recorder := record.NewFakeRecorder(10)
+
+		r := NewClusterReconciler(client, scheme, recorder,
+			WithHCloudClient(&MockHCloudClient{}),
+		)
+
+		result, err := r.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: "default",
+				Name:      "test-cluster",
 			},
 		})
 
@@ -377,9 +426,85 @@ func TestGenerateReplacementServerName(t *testing.T) {
 	})
 }
 
+func TestNodeChangePredicate(t *testing.T) {
+	t.Parallel()
+	pred := nodeChangePredicate()
+
+	readyNode := func() *corev1.Node { return createTestNode("node-1", false, true) }
+	notReadyNode := func() *corev1.Node { return createTestNode("node-1", false, false) }
+
+	update := func(oldNode, newNode *corev1.Node) event.UpdateEvent {
+		return event.UpdateEvent{ObjectOld: oldNode, ObjectNew: newNode}
+	}
+
+	t.Run("ignores heartbeat-only updates", func(t *testing.T) {
+		t.Parallel()
+		oldNode, newNode := readyNode(), readyNode()
+		newNode.Status.Conditions[0].LastHeartbeatTime = metav1.Now()
+		newNode.ResourceVersion = "2"
+		assert.False(t, pred.Update(update(oldNode, newNode)))
+	})
+
+	t.Run("enqueues on readiness transition", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, pred.Update(update(readyNode(), notReadyNode())))
+		assert.True(t, pred.Update(update(notReadyNode(), readyNode())))
+	})
+
+	t.Run("enqueues on unschedulable change", func(t *testing.T) {
+		t.Parallel()
+		cordoned := readyNode()
+		cordoned.Spec.Unschedulable = true
+		assert.True(t, pred.Update(update(readyNode(), cordoned)))
+	})
+
+	t.Run("enqueues on label change", func(t *testing.T) {
+		t.Parallel()
+		labeled := readyNode()
+		labeled.Labels = map[string]string{"node-role.kubernetes.io/control-plane": ""}
+		assert.True(t, pred.Update(update(readyNode(), labeled)))
+	})
+
+	t.Run("enqueues on deletion timestamp", func(t *testing.T) {
+		t.Parallel()
+		deleting := readyNode()
+		deleting.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		assert.True(t, pred.Update(update(readyNode(), deleting)))
+	})
+
+	t.Run("create and delete pass through", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, pred.Create(event.CreateEvent{Object: readyNode()}))
+		assert.True(t, pred.Delete(event.DeleteEvent{Object: readyNode()}))
+	})
+}
+
 func TestNodeEventHandler(t *testing.T) {
 	t.Parallel()
-	h := &nodeEventHandler{}
+	scheme := setupTestScheme(t)
+
+	newCluster := func(namespace, name string) *k8znerv1alpha1.K8znerCluster {
+		return &k8znerv1alpha1.K8znerCluster{
+			ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		}
+	}
+
+	h := &nodeEventHandler{
+		client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(newCluster("k8zner-system", "my-cluster")).
+			Build(),
+	}
+
+	expectEnqueued := func(t *testing.T, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+		t.Helper()
+		assert.Equal(t, 1, q.Len())
+
+		item, _ := q.Get()
+		assert.Equal(t, "k8zner-system", item.Namespace)
+		assert.Equal(t, "my-cluster", item.Name)
+		q.Done(item)
+	}
 
 	t.Run("Create enqueues cluster", func(t *testing.T) {
 		t.Parallel()
@@ -387,12 +512,7 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Create(context.Background(), event.CreateEvent{}, q)
-		assert.Equal(t, 1, q.Len())
-
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+		expectEnqueued(t, q)
 	})
 
 	t.Run("Update enqueues cluster", func(t *testing.T) {
@@ -401,12 +521,7 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Update(context.Background(), event.UpdateEvent{}, q)
-		assert.Equal(t, 1, q.Len())
-
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+		expectEnqueued(t, q)
 	})
 
 	t.Run("Delete enqueues cluster", func(t *testing.T) {
@@ -415,12 +530,7 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Delete(context.Background(), event.DeleteEvent{}, q)
-		assert.Equal(t, 1, q.Len())
-
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+		expectEnqueued(t, q)
 	})
 
 	t.Run("Generic enqueues cluster", func(t *testing.T) {
@@ -429,12 +539,26 @@ func TestNodeEventHandler(t *testing.T) {
 		defer q.ShutDown()
 
 		h.Generic(context.Background(), event.GenericEvent{}, q)
-		assert.Equal(t, 1, q.Len())
+		expectEnqueued(t, q)
+	})
 
-		item, _ := q.Get()
-		assert.Equal(t, "k8zner-system", item.Namespace)
-		assert.Equal(t, "cluster", item.Name)
-		q.Done(item)
+	t.Run("enqueues every cluster across namespaces", func(t *testing.T) {
+		t.Parallel()
+		multi := &nodeEventHandler{
+			client: fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(
+					newCluster("k8zner-system", "cluster-a"),
+					newCluster("other-ns", "cluster-b"),
+				).
+				Build(),
+		}
+
+		q := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+		defer q.ShutDown()
+
+		multi.Create(context.Background(), event.CreateEvent{}, q)
+		assert.Equal(t, 2, q.Len())
 	})
 }
 

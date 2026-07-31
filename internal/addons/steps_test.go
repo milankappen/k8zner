@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/milankappen/k8zner/internal/addons/helm"
 	"github.com/milankappen/k8zner/internal/config"
 )
 
@@ -329,4 +330,75 @@ func TestStepConstants(t *testing.T) {
 	assert.Equal(t, "argocd", StepArgoCD)
 	assert.Equal(t, "monitoring", StepMonitoring)
 	assert.Equal(t, "talos-backup", StepTalosBackup)
+}
+
+func TestEnabledSteps_Versions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("steps carry the resolved default chart versions", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.Config{
+			Addons: config.AddonsConfig{
+				CCM:                 config.CCMConfig{Enabled: true},
+				CSI:                 config.CSIConfig{Enabled: true},
+				MetricsServer:       config.MetricsServerConfig{Enabled: true},
+				CertManager:         config.CertManagerConfig{Enabled: true},
+				Traefik:             config.TraefikConfig{Enabled: true},
+				ExternalDNS:         config.ExternalDNSConfig{Enabled: true},
+				ArgoCD:              config.ArgoCDConfig{Enabled: true},
+				KubePrometheusStack: config.KubePrometheusStackConfig{Enabled: true},
+				TalosBackup:         config.TalosBackupConfig{Enabled: true},
+			},
+		}
+
+		versions := make(map[string]string)
+		for _, s := range EnabledSteps(cfg) {
+			versions[s.Name] = s.Version
+		}
+
+		assert.Equal(t, helm.DefaultChartSpecs["hcloud-ccm"].Version, versions[StepCCM])
+		assert.Equal(t, helm.DefaultChartSpecs["hcloud-csi"].Version, versions[StepCSI])
+		assert.Equal(t, helm.DefaultChartSpecs["metrics-server"].Version, versions[StepMetricsServer])
+		assert.Equal(t, helm.DefaultChartSpecs["cert-manager"].Version, versions[StepCertManager])
+		assert.Equal(t, helm.DefaultChartSpecs["traefik"].Version, versions[StepTraefik])
+		assert.Equal(t, helm.DefaultChartSpecs["external-dns"].Version, versions[StepExternalDNS])
+		assert.Equal(t, helm.DefaultChartSpecs["argo-cd"].Version, versions[StepArgoCD])
+		assert.Equal(t, helm.DefaultChartSpecs["kube-prometheus-stack"].Version, versions[StepMonitoring])
+		assert.Equal(t, config.DefaultVersionMatrix().TalosBackup, versions[StepTalosBackup])
+	})
+
+	t.Run("helm version overrides are respected", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.Config{
+			Addons: config.AddonsConfig{
+				Traefik:     config.TraefikConfig{Enabled: true, Helm: config.HelmChartConfig{Version: "99.0.0"}},
+				TalosBackup: config.TalosBackupConfig{Enabled: true, Version: "v9.9.9"},
+			},
+		}
+
+		versions := make(map[string]string)
+		for _, s := range EnabledSteps(cfg) {
+			versions[s.Name] = s.Version
+		}
+
+		assert.Equal(t, "99.0.0", versions[StepTraefik])
+		assert.Equal(t, "v9.9.9", versions[StepTalosBackup])
+	})
+}
+
+func TestCNIVersion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults to registry version", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.Config{}
+		assert.Equal(t, helm.DefaultChartSpecs["cilium"].Version, CNIVersion(cfg))
+	})
+
+	t.Run("respects helm override", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.Config{}
+		cfg.Addons.Cilium.Helm.Version = "1.99.0"
+		assert.Equal(t, "1.99.0", CNIVersion(cfg))
+	})
 }

@@ -143,8 +143,10 @@ func TestBuildAddonSpec(t *testing.T) {
 				ArgoCD:              config.ArgoCDConfig{Enabled: true},
 				MetricsServer:       config.MetricsServerConfig{Enabled: true},
 				KubePrometheusStack: config.KubePrometheusStackConfig{Enabled: true},
+				Logging:             config.LoggingConfig{Enabled: true},
 			},
 		}
+		cfg.Addons.CertManager.Cloudflare.WildcardCertificate = true
 
 		spec := buildAddonSpec(cfg)
 		assert.True(t, spec.Traefik)
@@ -153,6 +155,8 @@ func TestBuildAddonSpec(t *testing.T) {
 		assert.True(t, spec.ArgoCD)
 		assert.True(t, spec.MetricsServer)
 		assert.True(t, spec.Monitoring)
+		assert.True(t, spec.Logging)
+		assert.True(t, spec.WildcardCertificate)
 	})
 
 	t.Run("all disabled by default", func(t *testing.T) {
@@ -166,6 +170,8 @@ func TestBuildAddonSpec(t *testing.T) {
 		assert.False(t, spec.ArgoCD)
 		assert.False(t, spec.MetricsServer)
 		assert.False(t, spec.Monitoring)
+		assert.False(t, spec.Logging)
+		assert.False(t, spec.WildcardCertificate)
 	})
 
 	t.Run("extracts custom argo subdomain", func(t *testing.T) {

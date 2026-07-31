@@ -5,11 +5,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/milankappen/k8zner/internal/config"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 )
+
+// defaultHTTPTimeout bounds individual HTTP requests (Hetzner API calls and
+// public IP lookups) so a degraded network cannot hang provisioning or
+// reconciliation indefinitely. Long-running operations poll with many short
+// requests, so a per-request bound is safe.
+const defaultHTTPTimeout = 30 * time.Second
 
 // RealClient implements InfrastructureManager using the Hetzner Cloud API.
 type RealClient struct {
@@ -45,9 +52,12 @@ func WithHCloudClient(hc *hcloud.Client) ClientOption {
 // NewRealClient creates a new RealClient with optional configuration.
 func NewRealClient(token string, opts ...ClientOption) *RealClient {
 	c := &RealClient{
-		client:     hcloud.NewClient(hcloud.WithToken(token)),
+		client: hcloud.NewClient(
+			hcloud.WithToken(token),
+			hcloud.WithHTTPClient(&http.Client{Timeout: defaultHTTPTimeout}),
+		),
 		timeouts:   config.LoadTimeouts(),
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: defaultHTTPTimeout},
 	}
 	for _, opt := range opts {
 		opt(c)

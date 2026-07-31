@@ -12,6 +12,7 @@ import (
 type K8znerClusterSpec struct {
 	// Region is the Hetzner Cloud region (e.g., fsn1, nbg1, hel1)
 	// +kubebuilder:validation:Enum=fsn1;nbg1;hel1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="region is immutable"
 	Region string `json:"region"`
 
 	// ControlPlanes defines the control plane configuration
@@ -57,9 +58,14 @@ type K8znerClusterSpec struct {
 	// Domain is the base domain for ingress resources (e.g., "example.com").
 	// When set, addons like ArgoCD and Grafana will have ingress automatically configured.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`
 	Domain string `json:"domain,omitempty"`
 
-	// CredentialsRef references the Secret containing HCloud token and Talos secrets
+	// CredentialsRef references the Secret containing HCloud token and Talos secrets.
+	// Once set, it cannot be changed or removed: swapping credentials mid-lifecycle
+	// would silently re-point provisioning at a different Hetzner project.
+	// +kubebuilder:validation:XValidation:rule="!has(oldSelf.name) || oldSelf.name == \"\" || (has(self.name) && self.name == oldSelf.name)",message="credentialsRef is immutable once set"
 	CredentialsRef corev1.LocalObjectReference `json:"credentialsRef"`
 
 	// Bootstrap contains the state from CLI bootstrap (if applicable)
@@ -253,15 +259,29 @@ type AddonSpec struct {
 	// +optional
 	Monitoring bool `json:"monitoring,omitempty"`
 
+	// Logging enables the Loki + Alloy log aggregation stack
+	// +optional
+	Logging bool `json:"logging,omitempty"`
+
 	// ArgoSubdomain overrides the default "argo" subdomain for ArgoCD ingress.
 	// The full host will be "{argoSubdomain}.{domain}".
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
 	ArgoSubdomain string `json:"argoSubdomain,omitempty"`
 
 	// GrafanaSubdomain overrides the default "grafana" subdomain for Grafana ingress.
 	// The full host will be "{grafanaSubdomain}.{domain}".
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
 	GrafanaSubdomain string `json:"grafanaSubdomain,omitempty"`
+
+	// WildcardCertificate additionally issues a "*.{domain}" certificate via
+	// DNS01 and sets it as Traefik's default certificate, so ingresses
+	// without an explicit TLS secret are covered. Requires domain.
+	// +optional
+	WildcardCertificate bool `json:"wildcardCertificate,omitempty"`
 }
 
 // K8znerClusterStatus defines the observed state of K8znerCluster.
@@ -706,6 +726,10 @@ const (
 	ConditionImageReady = "ImageReady"
 	// ConditionBootstrapped indicates the cluster has been bootstrapped
 	ConditionBootstrapped = "Bootstrapped"
+	// ConditionUpToDate indicates node versions match the spec
+	// (False means an upgrade is pending; the operator does not perform
+	// node upgrades itself — run `k8zner apply` to roll them out)
+	ConditionUpToDate = "UpToDate"
 )
 
 // Credentials Secret keys

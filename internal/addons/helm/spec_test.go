@@ -29,7 +29,7 @@ func TestGetChartSpec_KnownCharts(t *testing.T) {
 			chartName:       "hcloud-csi",
 			expectedRepo:    "https://charts.hetzner.cloud",
 			expectedChart:   "hcloud-csi",
-			expectedVersion: "2.18.3",
+			expectedVersion: "2.20.2",
 		},
 		{
 			name:            "cilium",

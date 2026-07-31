@@ -16,6 +16,7 @@ import (
 
 	"github.com/milankappen/k8zner/internal/config"
 	"github.com/milankappen/k8zner/internal/platform/cloudflare"
+	"github.com/milankappen/k8zner/internal/platform/dns"
 	"github.com/milankappen/k8zner/internal/provisioning/destroy"
 )
 
@@ -217,15 +218,21 @@ func deleteS3Bucket(ctx context.Context, client *s3.Client, bucketName string) e
 	return nil
 }
 
+// newDNSProvider creates the DNS backend used for record cleanup.
+// Package-level for test injection, like the other handler factories.
+var newDNSProvider = func(apiToken string) dns.Provider {
+	return cloudflare.NewClient(apiToken)
+}
+
 // cleanupCloudflareDNS removes DNS records owned by this cluster from Cloudflare.
 // Records are identified via TXT ownership records created by external-dns.
 func cleanupCloudflareDNS(ctx context.Context, cfg *config.Config) error {
-	cfClient := cloudflare.NewClient(cfg.Addons.Cloudflare.APIToken)
+	provider := newDNSProvider(cfg.Addons.Cloudflare.APIToken)
 
 	zoneID := cfg.Addons.Cloudflare.ZoneID
 	if zoneID == "" {
 		var err error
-		zoneID, err = cfClient.GetZoneID(ctx, cfg.Addons.Cloudflare.Domain)
+		zoneID, err = provider.GetZoneID(ctx, cfg.Addons.Cloudflare.Domain)
 		if err != nil {
 			return fmt.Errorf("failed to get zone ID for %s: %w", cfg.Addons.Cloudflare.Domain, err)
 		}
@@ -237,7 +244,7 @@ func cleanupCloudflareDNS(ctx context.Context, cfg *config.Config) error {
 		ownerID = cfg.ClusterName
 	}
 
-	count, err := cfClient.CleanupClusterRecords(ctx, zoneID, ownerID)
+	count, err := provider.CleanupClusterRecords(ctx, zoneID, ownerID)
 	if err != nil {
 		return fmt.Errorf("failed to clean up DNS records: %w", err)
 	}

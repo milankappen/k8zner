@@ -1,5 +1,6 @@
 .PHONY: fmt lint test test-coverage test-unit test-integration test-kind build install check e2e e2e-fast e2e-snapshot-only clean help \
-       setup-hooks scan-secrets setup-envtest setup-kind sync-crds check-crds sync-operator-chart check-operator-chart
+       setup-hooks scan-secrets setup-envtest setup-kind sync-crds check-crds sync-operator-chart check-operator-chart \
+       generate manifests check-manifests
 
 # Default target
 .DEFAULT_GOAL := help
@@ -8,6 +9,10 @@
 ENVTEST_K8S_VERSION ?= 1.35.0
 ENVTEST_ASSETS_DIR ?= $(shell pwd)/bin/envtest
 ENVTEST := $(shell pwd)/bin/setup-envtest
+
+# Code generation
+CONTROLLER_GEN_VERSION ?= v0.20.0
+CONTROLLER_GEN := $(shell pwd)/bin/controller-gen
 
 fmt:
 	go fmt ./...
@@ -82,26 +87,50 @@ check: fmt lint test build
 
 # Full e2e test suite (use in CI)
 # Builds snapshots, runs all tests, cleans up
+# Timeout accounts for shared snapshot build (~10-15m) plus the full dev-cluster
+# addon validation (~45-60m); the HA test only runs when CF_API_TOKEN/CF_DOMAIN
+# and HETZNER_S3_* are set, adding up to ~2h more.
 e2e:
-	go test -v -timeout=1h -tags=e2e ./tests/e2e/...
+	go test -v -timeout=2h -tags=e2e ./tests/e2e/...
 
 # Fast e2e for local development
 # Keeps snapshots between runs, skips snapshot build test
 e2e-fast:
 	@echo "Running fast e2e tests (keeping snapshots, skipping build test)"
 	@echo "WARNING: This skips TestSnapshotCreation - use 'make e2e' for full validation"
-	E2E_KEEP_SNAPSHOTS=true E2E_SKIP_SNAPSHOT_BUILD_TEST=true go test -v -timeout=1h -tags=e2e ./tests/e2e/...
+	E2E_KEEP_SNAPSHOTS=true E2E_SKIP_SNAPSHOT_BUILD_TEST=true go test -v -timeout=2h -tags=e2e ./tests/e2e/...
 
 # Test snapshot creation only
 # Useful for verifying image builder changes
 e2e-snapshot-only:
 	go test -v -timeout=30m -tags=e2e -run TestSnapshotCreation ./tests/e2e/...
 
-# Sync CRD from canonical source to deploy/ and operator-chart/
+# Regenerate deepcopy functions from api/ types
+generate: $(CONTROLLER_GEN)
+	$(CONTROLLER_GEN) object paths=./api/...
+
+# Regenerate CRD manifests from api/ types and propagate to all copies
+manifests: $(CONTROLLER_GEN) generate
+	$(CONTROLLER_GEN) crd paths=./api/... output:crd:artifacts:config=config/crd/bases
+	$(MAKE) sync-crds
+
+# Check that generated manifests and deepcopy code are up to date (for CI)
+check-manifests: manifests
+	@git diff --exit-code config/crd deploy/crds internal/addons/operator-chart/crds internal/operator/crds/manifests api/v1alpha1/zz_generated.deepcopy.go || \
+		(echo "ERROR: generated manifests out of date. Run 'make manifests' and commit the result." && exit 1)
+	@echo "Generated manifests up to date."
+
+$(CONTROLLER_GEN):
+	@mkdir -p $(shell pwd)/bin
+	GOBIN=$(shell pwd)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
+
+# Sync CRD from canonical source to deploy/, operator-chart/, and the
+# operator's embedded copy (self-applied at startup).
 sync-crds:
 	@echo "Syncing CRDs from config/crd/bases/ ..."
 	cp config/crd/bases/k8zner.io_k8znerclusters.yaml deploy/crds/k8zner.io_k8znerclusters.yaml
 	cp config/crd/bases/k8zner.io_k8znerclusters.yaml internal/addons/operator-chart/crds/k8zner.io_k8znerclusters.yaml
+	cp config/crd/bases/k8zner.io_k8znerclusters.yaml internal/operator/crds/manifests/k8zner.io_k8znerclusters.yaml
 	@echo "CRDs synced."
 
 # Check that CRD copies are in sync (for CI)
@@ -110,6 +139,8 @@ check-crds:
 		(echo "ERROR: deploy/crds/ CRD out of sync. Run 'make sync-crds'" && exit 1)
 	@diff -q config/crd/bases/k8zner.io_k8znerclusters.yaml internal/addons/operator-chart/crds/k8zner.io_k8znerclusters.yaml || \
 		(echo "ERROR: operator-chart/crds/ CRD out of sync. Run 'make sync-crds'" && exit 1)
+	@diff -q config/crd/bases/k8zner.io_k8znerclusters.yaml internal/operator/crds/manifests/k8zner.io_k8znerclusters.yaml || \
+		(echo "ERROR: internal/operator/crds/manifests/ CRD out of sync. Run 'make sync-crds'" && exit 1)
 	@echo "CRDs in sync."
 
 # Sync operator chart from deploy/helm/ (source of truth) to internal/addons/operator-chart/

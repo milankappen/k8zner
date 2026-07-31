@@ -6,6 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/milankappen/k8zner/internal/config"
 )
 
 func TestBuildClusterIssuerManifest_Staging(t *testing.T) {
@@ -162,4 +164,66 @@ func TestClusterIssuerData_Fields(t *testing.T) {
 	assert.Equal(t, "test-secret", data.SecretName)
 	assert.Equal(t, "api-token", data.SecretKey)
 	assert.True(t, data.Production)
+}
+
+func TestBuildWildcardCertManifest(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := buildWildcardCertManifest("example.com", "letsencrypt-cloudflare-production")
+	require.NoError(t, err)
+
+	var cert map[string]any
+	require.NoError(t, yaml.Unmarshal(manifest, &cert))
+	assert.Equal(t, "cert-manager.io/v1", cert["apiVersion"])
+	assert.Equal(t, "Certificate", cert["kind"])
+
+	certMeta := cert["metadata"].(map[string]any)
+	assert.Equal(t, "wildcard-example-com", certMeta["name"])
+	assert.Equal(t, "traefik", certMeta["namespace"])
+
+	certSpec := cert["spec"].(map[string]any)
+	assert.Equal(t, "wildcard-tls", certSpec["secretName"])
+	assert.ElementsMatch(t, []any{"*.example.com", "example.com"}, certSpec["dnsNames"])
+	issuerRef := certSpec["issuerRef"].(map[string]any)
+	assert.Equal(t, "letsencrypt-cloudflare-production", issuerRef["name"])
+	assert.Equal(t, "ClusterIssuer", issuerRef["kind"])
+}
+
+func TestBuildTLSStoreManifest(t *testing.T) {
+	t.Parallel()
+
+	var store map[string]any
+	require.NoError(t, yaml.Unmarshal(buildTLSStoreManifest(), &store))
+	assert.Equal(t, "traefik.io/v1alpha1", store["apiVersion"])
+	assert.Equal(t, "TLSStore", store["kind"])
+
+	storeMeta := store["metadata"].(map[string]any)
+	assert.Equal(t, "default", storeMeta["name"])
+	assert.Equal(t, "traefik", storeMeta["namespace"])
+
+	storeSpec := store["spec"].(map[string]any)
+	defaultCert := storeSpec["defaultCertificate"].(map[string]any)
+	assert.Equal(t, "wildcard-tls", defaultCert["secretName"])
+}
+
+func TestCloudflareIssuerName(t *testing.T) {
+	t.Parallel()
+
+	withEmail := config.CertManagerCloudflareConfig{Email: "ops@example.com"}
+	assert.Equal(t, "letsencrypt-cloudflare-production", cloudflareIssuerName(withEmail))
+
+	// Without an email only the staging issuer exists.
+	assert.Equal(t, "letsencrypt-cloudflare-staging", cloudflareIssuerName(config.CertManagerCloudflareConfig{}))
+}
+
+func TestBuildWildcardCertManifest_SanitizesDomain(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := buildWildcardCertManifest("apps.my-domain.co.uk", "letsencrypt-cloudflare-staging")
+	require.NoError(t, err)
+
+	var cert map[string]any
+	require.NoError(t, yaml.Unmarshal(manifest, &cert))
+	certMeta := cert["metadata"].(map[string]any)
+	assert.Equal(t, "wildcard-apps-my-domain-co-uk", certMeta["name"])
 }

@@ -2,19 +2,29 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"os"
+	"strings"
+	"time"
 
+	"go.uber.org/zap/zapcore"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
 	"github.com/milankappen/k8zner/internal/operator/controller"
+	"github.com/milankappen/k8zner/internal/operator/crds"
 )
 
 var (
@@ -30,30 +40,118 @@ func init() {
 	utilruntime.Must(k8znerv1alpha1.AddToScheme(scheme))
 }
 
+// ensureCRDs server-side-applies the operator's embedded CRDs with a direct
+// (uncached) client, bounded so a hung apiserver cannot stall startup forever.
+func ensureCRDs(restConfig *rest.Config) error {
+	s := runtime.NewScheme()
+	if err := apiextensionsv1.AddToScheme(s); err != nil {
+		return fmt.Errorf("failed to register apiextensions scheme: %w", err)
+	}
+
+	directClient, err := client.New(restConfig, client.Options{Scheme: s})
+	if err != nil {
+		return fmt.Errorf("failed to create client for CRD apply: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return crds.Ensure(ctx, directClient)
+}
+
+// loadHCloudToken reads the Hetzner Cloud API token from the file named by
+// HCLOUD_TOKEN_FILE (preferred: a mounted Secret volume keeps the token out of
+// the pod's environment and `kubectl describe` output), falling back to the
+// HCLOUD_TOKEN environment variable. Whitespace is trimmed because secrets
+// created with `kubectl create secret --from-file` often carry a trailing
+// newline, which would make every Hetzner API call fail with 401.
+func loadHCloudToken() (string, error) {
+	if path := os.Getenv("HCLOUD_TOKEN_FILE"); path != "" {
+		data, err := os.ReadFile(path) // #nosec G304 G703 -- path is operator config, not user input
+		if err != nil {
+			return "", fmt.Errorf("failed to read HCLOUD_TOKEN_FILE: %w", err)
+		}
+		token := strings.TrimSpace(string(data))
+		if token == "" {
+			return "", fmt.Errorf("token file %s is empty", path)
+		}
+		return token, nil
+	}
+
+	token := strings.TrimSpace(os.Getenv("HCLOUD_TOKEN"))
+	if token == "" {
+		return "", fmt.Errorf("either HCLOUD_TOKEN_FILE or HCLOUD_TOKEN must be set")
+	}
+	return token, nil
+}
+
 func main() {
 	var (
 		metricsAddr          string
 		probeAddr            string
 		enableLeaderElection bool
 		leaderElectionID     string
+		logLevel             string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "Enable leader election for controller manager.")
 	flag.StringVar(&leaderElectionID, "leader-election-id", "k8zner-operator", "The name of the leader election resource.")
+	flag.StringVar(&logLevel, "log-level", "info", "Log verbosity: debug, info, or error.")
 
-	opts := zap.Options{
-		Development: os.Getenv("DEBUG") == "true",
+	// DEBUG=true is the legacy switch, kept so existing deployments don't
+	// silently lose debug output when upgrading.
+	if os.Getenv("DEBUG") == "true" {
+		logLevel = "debug"
 	}
+
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+
+	// Explicitly-passed zap flags stay authoritative; --log-level only fills
+	// in when they are absent. Unknown values fall back to info instead of
+	// exiting: a values.yaml typo must not crash-loop the operator that
+	// self-heals the cluster it runs on.
+	invalidLevel := false
+	if !setFlags["zap-log-level"] && !setFlags["zap-devel"] {
+		switch logLevel {
+		case "debug":
+			opts.Development = true
+			opts.Level = zapcore.DebugLevel
+		case "info":
+			opts.Level = zapcore.InfoLevel
+		case "error":
+			opts.Level = zapcore.ErrorLevel
+		default:
+			invalidLevel = true
+			opts.Level = zapcore.InfoLevel
+		}
+	}
+
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if invalidLevel {
+		setupLog.Error(nil, "invalid --log-level, using info (valid: debug, info, error)", "value", logLevel)
+	}
 
 	setupLog.Info("starting k8zner-operator", "version", Version)
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restConfig := ctrl.GetConfigOrDie()
+
+	// Self-apply the CRD before the manager starts so the served schema
+	// always matches this binary (Helm never upgrades chart crds/).
+	// Non-fatal: operators deployed before the apiextensions RBAC existed
+	// would otherwise crash-loop on upgrade; they can still reconcile
+	// against the already-installed CRD.
+	if err := ensureCRDs(restConfig); err != nil {
+		setupLog.Error(err, "unable to self-apply CRDs; continuing with the schema already installed")
+	}
+
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: metricsAddr,
@@ -71,10 +169,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get credentials from environment or secrets
-	hcloudToken := os.Getenv("HCLOUD_TOKEN")
-	if hcloudToken == "" {
-		setupLog.Error(nil, "HCLOUD_TOKEN environment variable is required")
+	hcloudToken, err := loadHCloudToken()
+	if err != nil {
+		setupLog.Error(err, "unable to load Hetzner Cloud token")
 		os.Exit(1)
 	}
 

@@ -1018,6 +1018,53 @@ func TestRealClient_DeleteVolumesByLabel_DeleteError(t *testing.T) {
 	}
 }
 
+// TestRealClient_DeleteVolumesByLabel_ServiceErrorRetriesThenSucceeds simulates
+// the real-world race where a volume's attachment state hasn't cleared yet
+// right after its server was deleted: Hetzner reports this as the generic
+// ErrorCodeServiceError (it has no more specific code for the condition), and
+// deletion must retry rather than give up on the first attempt.
+func TestRealClient_DeleteVolumesByLabel_ServiceErrorRetriesThenSucceeds(t *testing.T) {
+	t.Parallel()
+	ts := newTestServer()
+	defer ts.close()
+
+	ts.handleFunc("/volumes", func(w http.ResponseWriter, _ *http.Request) {
+		jsonResponse(w, http.StatusOK, schema.VolumeListResponse{
+			Volumes: []schema.Volume{
+				{ID: 1, Name: "vol-1", Labels: map[string]string{"cluster": "test"}},
+			},
+		})
+	})
+
+	attempts := 0
+	ts.handleFunc("/volumes/1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			return
+		}
+		attempts++
+		if attempts < 3 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			jsonResponse(w, http.StatusConflict, schema.ErrorResponse{
+				Error: schema.Error{Code: "service_error", Message: "volume with ID '1' is still attached to a server"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := ts.realClient()
+	ctx := context.Background()
+
+	err := client.deleteVolumesByLabel(ctx, "cluster=test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempts != 3 {
+		t.Errorf("expected 3 delete attempts, got %d", attempts)
+	}
+}
+
 // TestRealClient_DeleteVolumesByLabel_ContextCanceled tests context cancellation during volume deletion.
 func TestRealClient_DeleteVolumesByLabel_ContextCanceled(t *testing.T) {
 	t.Parallel()

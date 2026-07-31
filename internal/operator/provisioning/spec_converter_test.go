@@ -1032,3 +1032,67 @@ func TestSpecToConfig_MinimalSpec(t *testing.T) {
 	// No cloudflare
 	assert.False(t, cfg.Addons.Cloudflare.Enabled)
 }
+
+func TestConfigureCloudflare_WildcardCertificate(t *testing.T) {
+	t.Parallel()
+
+	newCfg := func() *config.Config {
+		cfg := &config.Config{}
+		cfg.Addons.ExternalDNS.Enabled = true
+		cfg.Addons.CertManager.Enabled = true
+		return cfg
+	}
+
+	t.Run("disabled by default", func(t *testing.T) {
+		t.Parallel()
+		cfg := newCfg()
+		spec := &k8znerv1alpha1.K8znerClusterSpec{Domain: "example.com"}
+
+		configureCloudflare(cfg, spec, baseCreds(), "test")
+		assert.False(t, cfg.Addons.CertManager.Cloudflare.WildcardCertificate)
+	})
+
+	t.Run("enabled from CRD spec", func(t *testing.T) {
+		t.Parallel()
+		cfg := newCfg()
+		spec := &k8znerv1alpha1.K8znerClusterSpec{
+			Domain: "example.com",
+			Addons: &k8znerv1alpha1.AddonSpec{WildcardCertificate: true},
+		}
+
+		configureCloudflare(cfg, spec, baseCreds(), "test")
+		assert.True(t, cfg.Addons.CertManager.Cloudflare.WildcardCertificate)
+	})
+}
+
+func TestSpecToConfig_Logging(t *testing.T) {
+	t.Parallel()
+
+	t.Run("disabled by default", func(t *testing.T) {
+		t.Parallel()
+		spec := &k8znerv1alpha1.K8znerClusterSpec{}
+		cluster := &k8znerv1alpha1.K8znerCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+			Spec:       *spec,
+		}
+
+		cfg, err := SpecToConfig(cluster, baseCreds())
+		require.NoError(t, err)
+		assert.False(t, cfg.Addons.Logging.Enabled)
+	})
+
+	t.Run("enabled from CRD spec with default retention", func(t *testing.T) {
+		t.Parallel()
+		cluster := &k8znerv1alpha1.K8znerCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+			Spec: k8znerv1alpha1.K8znerClusterSpec{
+				Addons: &k8znerv1alpha1.AddonSpec{Logging: true},
+			},
+		}
+
+		cfg, err := SpecToConfig(cluster, baseCreds())
+		require.NoError(t, err)
+		assert.True(t, cfg.Addons.Logging.Enabled)
+		assert.Equal(t, "168h", cfg.Addons.Logging.Retention)
+	})
+}
