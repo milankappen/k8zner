@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **x/text infinite loop on invalid input (GO-2026-5970)** resolved via x/text 0.39.0.
 - **oras-go tarball/redirect credential issues (GO-2026-5885, 5884; CVE-2026-50163)** resolved via oras-go 2.6.2.
 - **containerd CRI image-config command execution (GO-2026-5758)** resolved via containerd 1.7.33.
+- **cel-go JSON private field exposure (GHSA-gcjh-h69q-9w9g)** resolved via cel-go 0.26.1 → 0.29.0 (transitive, via siderolabs/talos machinery).
 - `govulncheck`'s CI allowlist now covers four advisories with no released fix, all reached only via package `init()` of transitive deps we never invoke (x/crypto/openpgp's unmaintained-package advisory, and three containerd CRI checkpoint/restore advisories pulled in transitively through Helm's OCI registry client) — not reachable through any code path this project actually calls.
 
 ### 🐛 Fixed
