@@ -87,15 +87,18 @@ check: fmt lint test build
 
 # Full e2e test suite (use in CI)
 # Builds snapshots, runs all tests, cleans up
+# Timeout accounts for shared snapshot build (~10-15m) plus the full dev-cluster
+# addon validation (~45-60m); the HA test only runs when CF_API_TOKEN/CF_DOMAIN
+# and HETZNER_S3_* are set, adding up to ~2h more.
 e2e:
-	go test -v -timeout=1h -tags=e2e ./tests/e2e/...
+	go test -v -timeout=2h -tags=e2e ./tests/e2e/...
 
 # Fast e2e for local development
 # Keeps snapshots between runs, skips snapshot build test
 e2e-fast:
 	@echo "Running fast e2e tests (keeping snapshots, skipping build test)"
 	@echo "WARNING: This skips TestSnapshotCreation - use 'make e2e' for full validation"
-	E2E_KEEP_SNAPSHOTS=true E2E_SKIP_SNAPSHOT_BUILD_TEST=true go test -v -timeout=1h -tags=e2e ./tests/e2e/...
+	E2E_KEEP_SNAPSHOTS=true E2E_SKIP_SNAPSHOT_BUILD_TEST=true go test -v -timeout=2h -tags=e2e ./tests/e2e/...
 
 # Test snapshot creation only
 # Useful for verifying image builder changes
