@@ -110,6 +110,38 @@ func TestBuildCSIValues(t *testing.T) {
 	}
 }
 
+func TestBuildCSIValues_VolumeClusterLabels(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{
+		ClusterName: "my-cluster",
+		ControlPlane: config.ControlPlaneConfig{
+			NodePools: []config.ControlPlaneNodePool{
+				{Count: 1},
+			},
+		},
+	}
+	values := buildCSIValues(cfg)
+
+	storageClasses, ok := values["storageClasses"].([]helm.Values)
+	require.True(t, ok)
+	require.Len(t, storageClasses, 2)
+
+	// Every storage class must tag created volumes with the cluster's
+	// standard labels (both key styles, matching labels.NewLabelBuilder),
+	// so Destroy's CleanupByLabel can find and delete them. Without this,
+	// CSI-provisioned Hetzner volumes are invisible to cluster teardown:
+	// they never receive k8zner's cluster labels on their own, only CSI's
+	// fixed pvc-name/pvc-namespace/managed-by labels.
+	for _, sc := range storageClasses {
+		extraParams, ok := sc["extraParameters"].(helm.Values)
+		require.True(t, ok, "storage class %q should have extraParameters", sc["name"])
+		labelsParam, ok := extraParams["labels"].(string)
+		require.True(t, ok, "storage class %q should set the labels parameter", sc["name"])
+		assert.Contains(t, labelsParam, "k8zner.io/cluster=my-cluster")
+		assert.Contains(t, labelsParam, "cluster=my-cluster")
+	}
+}
+
 func TestBuildCSIValues_DefaultStorageClass(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
