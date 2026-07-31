@@ -7,25 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-05-25
+## [0.10.0] - 2026-07-31
 
 ### 🔄 Changed
 
 - **Module path renamed** `github.com/imamik/k8zner` → `github.com/milankappen/k8zner` following the GitHub username change. Update imports and reinstall via `go install github.com/milankappen/k8zner/cmd/k8zner@latest`. Homebrew users: `brew untap imamik/tap && brew tap milankappen/tap`.
 - **All references repointed** to `milankappen` — badges, install commands, Helm chart metadata, `ghcr.io/milankappen/k8zner-operator` image path, GoReleaser config, release scripts, and CI image names.
-- **Dependencies bumped** — containerd 1.7.30 → 1.7.32, helm 3.20.1 → 3.20.2, k8s.io/* 0.35.3 → 0.35.4, golang.org/x/net → 0.55.0, golang.org/x/crypto → 0.52.0, aws-sdk-go-v2/s3 → 1.101.0, mattn/go-isatty → 0.0.22, plus transitive updates.
-- **GitHub Actions bumped** — codecov-action v5 → v6, setup-qemu-action v3 → v4, setup-kubectl v4 → v5, login-action v3 → v4, metadata-action v5 → v6.
+- **Dependencies bumped** — containerd 1.7.30 → 1.7.33, helm 3.20.1 → 3.20.2, k8s.io/* 0.35.3 → 0.35.4, golang.org/x/net → 0.55.0, golang.org/x/crypto → 0.52.0, golang.org/x/text → 0.39.0, google.golang.org/grpc → 1.82.1, oras.land/oras-go/v2 → 2.6.2, aws-sdk-go-v2/s3 → 1.101.0, mattn/go-isatty → 0.0.22, plus transitive updates.
+- **Go toolchain bumped** 1.26.3 → 1.26.5 for stdlib CVE fixes.
+- **GitHub Actions bumped** — codecov-action v5 → v6, setup-qemu-action v3 → v4, setup-kubectl v4 → v5, login-action v3 → v4, metadata-action v5 → v6; `trivy-action` pinned to `0.35.0` (was tracking `@master`).
 
 ### 🔒 Security
 
 - **containerd runAsNonRoot bypass (high)** resolved via containerd 1.7.32.
 - **Helm chart extraction path collapse (medium)** resolved via helm 3.20.2.
-- `govulncheck` reports no known vulnerabilities.
+- **crypto/tls ECH privacy leak (GO-2026-5856)** resolved via Go 1.26.5.
+- **grpc HTTP/2 transport + xDS RBAC (GO-2026-6061)** resolved via grpc 1.82.1.
+- **x/text infinite loop on invalid input (GO-2026-5970)** resolved via x/text 0.39.0.
+- **oras-go tarball/redirect credential issues (GO-2026-5885, 5884; CVE-2026-50163)** resolved via oras-go 2.6.2.
+- **containerd CRI image-config command execution (GO-2026-5758)** resolved via containerd 1.7.33.
+- `govulncheck`'s CI allowlist now covers four advisories with no released fix, all reached only via package `init()` of transitive deps we never invoke (x/crypto/openpgp's unmaintained-package advisory, and three containerd CRI checkpoint/restore advisories pulled in transitively through Helm's OCI registry client) — not reachable through any code path this project actually calls.
 
 ### 🐛 Fixed
 
 - **Flaky handler tests** — `TestPersistAccessData`, `TestWriteTalosFiles`, `TestWriteKubeconfig`, `TestInitializeTalosGenerator`, `TestFactoryVariables`, and `TestDestroy` swapped package-global factory vars while running in parallel, racing each other; these tests now run serially.
 - **`TestFindConfigFile` on macOS** — resolve symlinks on the temp dir so the `/var` → `/private/var` resolution from `os.Getwd` no longer fails the assertion.
+- **`TestClearCache` race** — ran in parallel against the real, shared `~/.cache/k8zner/charts` directory that `TestDownloadChartIntegration` also writes to; intermittently wiped the chart the other test had just downloaded. Now uses its own isolated cache dir.
 
 ## [0.9.3] - 2026-04-04
 
