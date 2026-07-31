@@ -64,10 +64,32 @@ jobs:
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          # These advisories have no released fix and are reached only via
+          # package init() of transitive deps we never invoke - not through
+          # any code path we actually call:
+          #  - GO-2026-5932: x/crypto/openpgp "unmaintained package" advisory,
+          #    reached only via init of helm.sh/helm/v3/pkg/repo (chart
+          #    provenance support we never invoke).
+          #  - GO-2026-5622/5338/5064: containerd CRI checkpoint/restore
+          #    advisories, reached only via init of containerd/containerd's
+          #    content-store packages that helm.sh/helm/v3's OCI registry
+          #    client (pkg/getter, pkg/registry) pulls in transitively - we
+          #    never use containerd's CRI/runtime functionality.
+          # Remove each exclusion once its upstream fix ships or the
+          # transitive dependency is dropped.
+          ALLOWLIST_JSON='["GO-2026-5932","GO-2026-5622","GO-2026-5338","GO-2026-5064"]'
+          govulncheck -format json ./... > vuln.json
+          UNEXPECTED=$(jq -rs --argjson allow "$ALLOWLIST_JSON" \
+            '[.[] | .finding? | select(. != null) | select(.trace[0].function != null) | select(.osv as $o | $allow | index($o) | not) | .osv] | unique | .[]' vuln.json)
+          if [ -n "$UNEXPECTED" ]; then
+            echo "govulncheck found vulnerabilities: $UNEXPECTED"
+            govulncheck ./... || true
+            exit 1
+          fi
+          echo "govulncheck clean (allowlisted: $ALLOWLIST_JSON)"
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
