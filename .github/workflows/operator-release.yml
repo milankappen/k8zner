@@ -73,6 +73,12 @@ jobs:
         run: |
           helm package deploy/helm/k8zner-operator -d .helm-packages
 
+      - name: Push Helm chart to GHCR
+        run: |
+          VERSION=${{ steps.version.outputs.version_short }}
+          helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
+          helm push ".helm-packages/k8zner-operator-${VERSION}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -87,7 +93,8 @@ jobs:
             kubectl apply -f https://github.com/${{ github.repository }}/releases/download/operator-${{ steps.version.outputs.version }}/k8zner.io_k8znerclusters.yaml
 
             # Install operator via Helm
-            helm install k8zner-operator oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-chart:${{ steps.version.outputs.version_short }} \
+            helm install k8zner-operator oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/k8zner-operator \
+              --version ${{ steps.version.outputs.version_short }} \
               --namespace k8zner-system \
               --create-namespace \
               --set credentials.hcloudToken=$HCLOUD_TOKEN
