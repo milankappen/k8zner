@@ -211,6 +211,48 @@ significant fraction of the original Hetzner work. That's the price of keeping t
 promise, and why providers arrive one at a time, late in the roadmap, and only after
 the seam is proven by the refactor.
 
+**Multi-cloud: fleet of clusters, not one stretched cluster.**
+
+"Multi-provider" must not be read as "one cluster spanning providers". Today the
+entire data path rides the Hetzner private network: deterministic private IPs per
+node pool, Cilium in **native routing over the private CIDR**, control-plane LB
+targeting private IPs, etcd and kube-apiserver traffic on the private network. A
+node in another provider has no path into that network at all.
+
+The public-network part is, perhaps surprisingly, the *solvable* piece: Talos ships
+**KubeSpan** (a WireGuard mesh over public internet, built for exactly this), and
+Cilium supports WireGuard encryption with tunnel routing (our config already has
+`encryption_type: wireguard`). What actually breaks a stretched cluster:
+
+- **etcd quorum latency.** etcd wants low-single-digit-ms RTT; cross-provider links
+  are 20–50 ms+. Stretched etcd means slow writes, spurious leader elections, and
+  instability — a known anti-pattern. This alone rules out cross-provider control
+  planes.
+- **CCM semantics.** Hetzner CCM owns node lifecycle; nodes it can't find in the
+  hcloud API get marked for deletion unless carefully excluded. Two CCMs in one
+  cluster fight over the same responsibilities.
+- **LB reachability.** A Hetzner LB targets Hetzner private IPs only — no provider
+  LB can front nodes living elsewhere.
+- **Secondary frictions**: provider-local CSI volumes (topology-manageable but
+  sharp), WireGuard MTU overhead, cross-provider egress cost.
+
+Supported multi-cloud shapes, in order of recommendation:
+
+1. **Fleet (the multi-cloud story).** Each cluster lives entirely in one provider
+   with full comfort; the platform layer (Phase 5 fleet mode) places applications
+   across clusters, with DNS-based failover via external-dns. Sovereignty and
+   provider redundancy are achieved at the platform level, where they're cheap,
+   instead of at the etcd level, where they're ruinous. Optional later: Cilium
+   Cluster Mesh for cross-cluster service connectivity between consenting clusters.
+2. **Hybrid workers (a tier, reduced comfort).** Control plane and etcd stay in one
+   provider; remote workers (another provider or bare metal) join over
+   KubeSpan/WireGuard. Tractable because etcd stays local — but those nodes must be
+   excluded from the resident CCM, can't sit behind the provider LB, and get no CSI
+   unless their own provider's driver is added. This shares nearly all machinery
+   with the BYO-server tier, so the two should be built as one capability.
+3. **Stretched control plane across providers: never.** Not a roadmap item, not a
+   config option.
+
 ### 3.6 CI/CD stance
 
 "Professional CI/CD" ≠ building a CI system. Position:
