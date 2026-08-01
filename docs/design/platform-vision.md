@@ -43,7 +43,7 @@ vision requires a rewrite — it requires *extension*:
 | Backups (etcd) | `BackupSpec` + S3 |
 | Node management | Compute reconciliation (scale CPs/workers via CRD) |
 | Addon framework | `internal/addons` — Helm-based, tested, easy to add new components |
-| Provider layer | `internal/platform/hcloud` behind internal interfaces — the seam for multi-provider |
+| Provider layer | `internal/platform/hcloud` behind an interface — but hcloud-typed and Hetzner-shaped throughout; a real seam requires the refactor in §3.5 |
 
 What does **not** exist yet: a long-running API server, a web UI, user/org identity,
 Git-forge integration, an application-level CRD, and a database-service CRD. That is
@@ -147,20 +147,69 @@ existing addon/Helm machinery.
 
 ### 3.5 Multi-provider & bring-your-own-server
 
-`internal/platform` already isolates Hetzner. Formalize a `Provider` interface
-(servers, networks, load balancers, volumes, images) and:
+**Honesty first: k8zner's provisioning and reconciliation are explicitly Hetzner
+today, and the comfort that creates is the product.** Any provider we add must offer
+the *same* comfort — fully managed machine lifecycle, image builds, load balancers,
+networking, storage, cleanup — or it isn't a supported provider. A thin "servers
+API" adapter would produce second-class providers and dilute the promise.
 
-1. Keep **hcloud** as the reference implementation.
-2. Add EU providers where Talos + API maturity allow (candidates: OVHcloud, Scaleway,
-   netcup; evaluate per-provider LB/CCM/CSI story — this is the real cost, not the
-   server API).
-3. **BYO-server**: a "null provider" — user brings machines that boot Talos (bare
-   metal/other VPS); k8zner handles Talos config, joining, addons, but not machine
-   lifecycle. This is cheaper to ship than a full second cloud provider and unlocks
-   the sovereignty story early.
+Where the coupling actually lives (inventory, not exhaustive):
 
-CCM/CSI/LB are the hard parts of any new provider. For BYO-server, default to
-kube-vip or Cilium LB-IPAM + local-path/Longhorn storage presets.
+- **Interface boundary leaks hcloud types.** `internal/platform/hcloud.InfrastructureManager`
+  exists, but its signatures use hcloud-go types (`*hcloud.Server`,
+  `hcloud.FirewallRule`, `hcloud.LoadBalancerAlgorithmType`, …), so the operator
+  controllers (~15 files) and provisioning layers are written against Hetzner's data
+  model, not a neutral one.
+- **Image pipeline is Hetzner-mechanism-specific.** Talos images are built by booting
+  a server into Hetzner **rescue mode**, writing the image, and snapshotting. Other
+  providers need entirely different pipelines (custom-image upload, provider image
+  imports, ISO boot), not a re-parameterized version of ours.
+- **Reconciliation phases assume Hetzner objects.** Infrastructure phase = hcloud
+  network + firewall + placement group + LB; cleanup is hcloud label-selector based.
+- **The comfort layer is Hetzner-shaped.** Hetzner CCM (node lifecycle, LB services)
+  and CSI (volumes) addons; LB semantics; private network zones.
+- **Config & CRD validation encode the catalog.** Server types, regions
+  (`fsn1;nbg1;hel1` is a kubebuilder enum on the CRD), architectures, network zones.
+
+**Design response — providers as full-comfort modules, not adapters:**
+
+1. **Define comfort as a conformance contract.** A provider is a package that
+   delivers the full column: image build pipeline, machine lifecycle
+   (create/delete/reset/rescue-equivalent), private networking, firewall, LB (or a
+   blessed substitute), CCM, CSI, placement/anti-affinity, labeled cleanup, and a
+   validated catalog (regions, machine types) that feeds config validation, the CRD
+   schema, and the UI wizard. A shared conformance/e2e suite defines "supported".
+2. **Providers own their reconciliation steps and addons.** Rather than forcing one
+   generic infrastructure phase, the operator asks the provider for its phase
+   implementations and its addon set (its CCM/CSI/LB glue). Neutral domain types
+   (k8zner's own `Server`, `LoadBalancerSpec`, `FirewallRule`, …) exist at the
+   boundary; provider-specific richness stays inside the provider package. Where a
+   provider lacks a managed primitive, the provider module ships the substitute as
+   part of its comfort obligation (e.g. kube-vip / Cilium LB-IPAM instead of a
+   managed LB) — the user experience stays "it just works", the implementation
+   differs per provider.
+3. **Don't abstract against one implementation.** With only Hetzner in-tree, a
+   speculative interface will be wrong. Sequence the work as: (a) mechanical de-leak —
+   remove hcloud-go types from `InfrastructureManager` signatures and the CRD/config
+   layer without changing behavior; (b) move Hetzner-specific reconciliation and
+   addons behind the provider seam; (c) build the **second provider to force the
+   abstraction right**, choosing it for API + image + CCM/CSI maturity (evaluate
+   Scaleway, OVHcloud, Exoscale; netcup-class providers lack the API surface for
+   full comfort and would enter as BYO-server targets instead).
+4. **BYO-server is a tier, not a provider.** Machines the user brings (bare metal,
+   arbitrary VPS) can never get machine-lifecycle comfort — no API to create,
+   rescue, or replace them. Offer it as an explicitly labeled tier: *managed
+   cluster on unmanaged machines* — Talos config, joining, addons, upgrades,
+   self-healing at the Kubernetes layer, with kube-vip/LB-IPAM and
+   local-path/Longhorn presets — while the UI is clear about what k8zner cannot
+   heal (the machine itself). It complements, not substitutes, real provider
+   integrations.
+
+The realistic cost estimate: a new full-comfort provider is a large effort
+(image pipeline + CCM/CSI validation + LB semantics + conformance), comparable to a
+significant fraction of the original Hetzner work. That's the price of keeping the
+promise, and why providers arrive one at a time, late in the roadmap, and only after
+the seam is proven by the refactor.
 
 ### 3.6 CI/CD stance
 
@@ -209,8 +258,11 @@ Each phase is independently shippable and valuable; stop-anywhere is a feature.
 4. **Phase 3 — Teams & projects.**
    Orgs/projects → namespaces + RBAC + quotas; audit log; API tokens per project.
 5. **Phase 4 — Providers.**
-   `Provider` interface extraction, BYO-server (null provider), then a second EU
-   cloud provider.
+   In order: (a) de-leak hcloud types from interfaces/config/CRD, (b) move
+   Hetzner reconciliation + addons behind the provider seam, (c) BYO-server as an
+   explicitly reduced-comfort tier, (d) a second **full-comfort** EU provider
+   (image pipeline + CCM/CSI + LB + conformance suite — see §3.5; this is a major
+   effort, not an adapter).
 6. **Phase 5 — Hosted platform.**
    Management-cluster fleet mode, billing, onboarding. Separate business decision;
    architecture above intentionally keeps the door open.
@@ -239,5 +291,9 @@ Each phase is independently shippable and valuable; stop-anywhere is a feature.
 - **Single-cluster vs. fleet semantics** for `Application` (Phase 5 impact on Phase 1
   API design): keep `clusterRef` optional-with-default in the CRD from day one so the
   fleet case is additive.
+- **Provider-parity cost**: the full-comfort bar (§3.5) means each provider is a
+  major investment. The risk is shipping a half-comfortable provider under
+  pressure; the conformance suite is the guardrail — a provider that doesn't pass
+  it doesn't ship.
 - **Name/branding**: "k8zner" is Hetzner-specific; a platform spanning providers may
   want an umbrella name with k8zner as the Hetzner provider. Defer, but note it.
