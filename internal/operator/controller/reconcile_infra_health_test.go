@@ -16,15 +16,24 @@ import (
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
 )
 
-func TestReconcileInfraHealth(t *testing.T) {
-	t.Parallel()
-
+// newInfraHealthTestScheme builds a fresh Scheme for a subtest. Each
+// t.Parallel() subtest needs its own instance: controller-runtime's fake
+// client lazily mutates the Scheme's internal type map on first Get() for
+// a given GVK, so subtests sharing one Scheme race on that mutation.
+func newInfraHealthTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	require.NoError(t, k8znerv1alpha1.AddToScheme(scheme))
+	return scheme
+}
+
+func TestReconcileInfraHealth(t *testing.T) {
+	t.Parallel()
 
 	t.Run("all infra healthy", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newInfraHealthTestScheme(t)
 		mockHCloud := &MockHCloudClient{
 			GetNetworkFunc: func(_ context.Context, _ string) (*hcloudgo.Network, error) {
 				return &hcloudgo.Network{ID: 1}, nil
@@ -63,6 +72,7 @@ func TestReconcileInfraHealth(t *testing.T) {
 	t.Run("network not found", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newInfraHealthTestScheme(t)
 		mockHCloud := &MockHCloudClient{
 			GetNetworkFunc: func(_ context.Context, _ string) (*hcloudgo.Network, error) {
 				return nil, nil
@@ -92,6 +102,7 @@ func TestReconcileInfraHealth(t *testing.T) {
 	t.Run("API error marks unhealthy", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newInfraHealthTestScheme(t)
 		mockHCloud := &MockHCloudClient{
 			GetNetworkFunc: func(_ context.Context, _ string) (*hcloudgo.Network, error) {
 				return nil, fmt.Errorf("API error")

@@ -13,15 +13,24 @@ import (
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
 )
 
-func TestReconcileConnectivityHealth(t *testing.T) {
-	t.Parallel()
-
+// newConnectivityTestScheme builds a fresh Scheme for a subtest. Each
+// t.Parallel() subtest needs its own instance: controller-runtime's fake
+// client lazily mutates the Scheme's internal type map on first Get() for
+// a given GVK, so subtests sharing one Scheme race on that mutation.
+func newConnectivityTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	require.NoError(t, k8znerv1alpha1.AddToScheme(scheme))
+	return scheme
+}
+
+func TestReconcileConnectivityHealth(t *testing.T) {
+	t.Parallel()
 
 	t.Run("kube API always ready", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newConnectivityTestScheme(t)
 		k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		recorder := record.NewFakeRecorder(10)
 		r := NewClusterReconciler(k8sClient, scheme, recorder)
@@ -37,6 +46,7 @@ func TestReconcileConnectivityHealth(t *testing.T) {
 	t.Run("no endpoints when no domain", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newConnectivityTestScheme(t)
 		k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		recorder := record.NewFakeRecorder(10)
 		r := NewClusterReconciler(k8sClient, scheme, recorder)
@@ -55,6 +65,7 @@ func TestReconcileConnectivityHealth(t *testing.T) {
 	t.Run("builds endpoints from spec", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newConnectivityTestScheme(t)
 		k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		recorder := record.NewFakeRecorder(10)
 		r := NewClusterReconciler(k8sClient, scheme, recorder)
@@ -83,6 +94,7 @@ func TestReconcileConnectivityHealth(t *testing.T) {
 	t.Run("uses default subdomains", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newConnectivityTestScheme(t)
 		k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		recorder := record.NewFakeRecorder(10)
 		r := NewClusterReconciler(k8sClient, scheme, recorder)
@@ -107,6 +119,7 @@ func TestReconcileConnectivityHealth(t *testing.T) {
 	t.Run("metrics API false when no APIService", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newConnectivityTestScheme(t)
 		k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		recorder := record.NewFakeRecorder(10)
 		r := NewClusterReconciler(k8sClient, scheme, recorder)

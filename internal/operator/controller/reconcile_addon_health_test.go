@@ -18,17 +18,26 @@ import (
 	k8znerv1alpha1 "github.com/milankappen/k8zner/api/v1alpha1"
 )
 
-func TestReconcileAddonHealth(t *testing.T) {
-	t.Parallel()
-
+// newAddonHealthTestScheme builds a fresh Scheme for a subtest. Each
+// t.Parallel() subtest needs its own instance: controller-runtime's fake
+// client lazily mutates the Scheme's internal type map on first Get() for
+// a given GVK, so subtests sharing one Scheme race on that mutation.
+func newAddonHealthTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	require.NoError(t, k8znerv1alpha1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, batchv1.AddToScheme(scheme))
+	return scheme
+}
+
+func TestReconcileAddonHealth(t *testing.T) {
+	t.Parallel()
 
 	t.Run("healthy deployment addon", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		dep := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: "hcloud-cloud-controller-manager", Namespace: "kube-system"},
 			Status:     appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1},
@@ -57,6 +66,7 @@ func TestReconcileAddonHealth(t *testing.T) {
 	t.Run("unhealthy deployment addon", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		dep := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: "hcloud-cloud-controller-manager", Namespace: "kube-system"},
 			Status:     appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 0},
@@ -84,6 +94,7 @@ func TestReconcileAddonHealth(t *testing.T) {
 	t.Run("healthy daemonset addon", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		ds := &appsv1.DaemonSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "cilium", Namespace: "kube-system"},
 			Status:     appsv1.DaemonSetStatus{NumberReady: 3},
@@ -111,6 +122,7 @@ func TestReconcileAddonHealth(t *testing.T) {
 	t.Run("cronjob addon exists", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		cj := &batchv1.CronJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "talos-backup", Namespace: "kube-system"},
 		}
@@ -136,6 +148,7 @@ func TestReconcileAddonHealth(t *testing.T) {
 	t.Run("monitoring requires metrics api plus prometheus and grafana", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		prom := &appsv1.StatefulSet{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "monitoring", Name: "kube-prometheus-stack-prometheus"},
 			Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
@@ -174,6 +187,7 @@ func TestReconcileAddonHealth(t *testing.T) {
 	t.Run("monitoring unhealthy when metrics api missing", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		prom := &appsv1.StatefulSet{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "monitoring", Name: "kube-prometheus-stack-prometheus", Labels: map[string]string{"app.kubernetes.io/name": "prometheus"}},
 			Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
@@ -201,6 +215,7 @@ func TestReconcileAddonHealth(t *testing.T) {
 	t.Run("skips uninstalled addons", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		recorder := record.NewFakeRecorder(10)
 		r := NewClusterReconciler(k8sClient, scheme, recorder)
@@ -223,6 +238,7 @@ func TestReconcileAddonHealth(t *testing.T) {
 	t.Run("sets AddonsHealthy condition", func(t *testing.T) {
 		t.Parallel()
 
+		scheme := newAddonHealthTestScheme(t)
 		dep := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: "hcloud-cloud-controller-manager", Namespace: "kube-system"},
 			Status:     appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1},
