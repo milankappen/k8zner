@@ -1,0 +1,243 @@
+# Design: From Cluster Provisioner to Infrastructure Platform
+
+Status: **Draft / Proposal** — for discussion, not yet committed to.
+
+## 1. Vision
+
+Evolve k8zner from "operator-driven Kubernetes on Hetzner" into a **Kubernetes-native
+infrastructure platform**: a self-hostable (and later hostable) product that lets a
+single engineer or small team run professional-grade infrastructure on cheap European
+hardware — with a UI, an API, and best practices baked in.
+
+Think **Coolify / Zeabur class UX, but Kubernetes-native and professional-grade**:
+
+- User authentication, teams/organizations
+- Connect GitHub / GitLab (and other forges) for source-based deployments
+- Configure applications visually or via API — while plain `kubectl`/GitOps deployments
+  are recognized and visualized too (no lock-in, no parallel universe)
+- Branch-based preview deployments, automatic TLS, automatic DNS
+- Native database provisioning with automated backups (Databasus integration)
+- Node management, metrics/monitoring for services and servers
+- Auto-recovery and self-healing (already the operator's core job)
+- Hetzner first; pluggable European providers (and bring-your-own-server) later
+- EU-sovereign by default: EU regions, EU-friendly component choices, self-hostable
+
+The differentiator vs. Coolify: **everything is Kubernetes**. The platform never invents
+its own runtime; it is a control plane + UI over CRDs, so users can always eject to raw
+Kubernetes, and everything the UI does is inspectable and GitOps-able.
+
+## 2. Why k8zner is already halfway there
+
+The existing architecture is unusually well-positioned for this. Nothing about the
+vision requires a rewrite — it requires *extension*:
+
+| Vision requirement | What exists today |
+|---|---|
+| Declarative platform state | `K8znerCluster` CRD + operator reconciliation phases (Infrastructure → Compute → CNI → Addons → Running) |
+| Self-healing / auto-recovery | Operator reconcile loop + `HealthCheckSpec` |
+| GitOps app delivery | ArgoCD installed by default |
+| Automatic TLS | cert-manager + Let's Encrypt, Cloudflare DNS-01 |
+| DNS automation | external-dns (enabled via `domain:`) |
+| Ingress / routing | Traefik + Gateway API |
+| Monitoring | kube-prometheus-stack addon (Prometheus, Grafana, Alertmanager) |
+| Backups (etcd) | `BackupSpec` + S3 |
+| Node management | Compute reconciliation (scale CPs/workers via CRD) |
+| Addon framework | `internal/addons` — Helm-based, tested, easy to add new components |
+| Provider layer | `internal/platform/hcloud` behind internal interfaces — the seam for multi-provider |
+
+What does **not** exist yet: a long-running API server, a web UI, user/org identity,
+Git-forge integration, an application-level CRD, and a database-service CRD. That is
+the platform layer this document proposes.
+
+## 3. Proposed architecture
+
+### 3.1 Guiding principles
+
+1. **CRDs are the API.** Every platform concept (application, database, backup policy,
+   git source) is a CRD reconciled by the operator. The REST API and UI are thin,
+   stateless-ish layers over the Kubernetes API. This keeps CLI, API, UI, and GitOps
+   perfectly consistent — same rule as today's dual-path (CLI ↔ operator) design
+   (ADR-002).
+2. **Integrate, don't rebuild.** cert-manager, external-dns, ArgoCD, CNPG, Databasus,
+   kube-prometheus-stack do the heavy lifting. k8zner adds opinionated glue, defaults,
+   and one coherent UI on top.
+3. **Visualize everything, own nothing exclusively.** Workloads deployed via plain
+   `kubectl` or external GitOps show up in the dashboard (read-only discovery of
+   Deployments/StatefulSets/Ingresses/Gateways). Only k8zner-managed resources get the
+   full lifecycle UX. No forced migration.
+4. **Self-hosted first, hosted later.** The platform ships as an in-cluster addon
+   (`platform: true`). A multi-tenant hosted offering is a deployment mode of the same
+   code, not a fork.
+
+### 3.2 Components
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Web UI (SPA)          k8zner CLI              GitOps / kubectl │
+└──────────┬──────────────────┬──────────────────────┬───────────┘
+           ▼                  ▼                      │
+┌─────────────────────────────────────┐              │
+│  k8zner-api (new, in-cluster)       │              │
+│  - AuthN: OIDC (built-in Dex or     │              │
+│    external IdP), API tokens        │              │
+│  - AuthZ: mapped to K8s RBAC        │              │
+│  - REST/streaming façade over CRDs  │              │
+│  - Git-forge webhooks (GH/GL)       │              │
+└──────────────────┬──────────────────┘              │
+                   ▼                                 ▼
+┌────────────────────────────────────────────────────────────────┐
+│                      Kubernetes API (CRDs)                     │
+│  K8znerCluster · Application · Database · BackupPolicy ·       │
+│  GitSource · (existing core resources)                         │
+└──────────────────┬─────────────────────────────────────────────┘
+                   ▼
+┌────────────────────────────────────────────────────────────────┐
+│  k8zner-operator (extended)                                    │
+│  - existing cluster/addon reconciliation                        │
+│  - Application → ArgoCD Application/ApplicationSet             │
+│  - Database → CNPG Cluster (+ others later)                    │
+│  - BackupPolicy → Databasus API                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**k8zner-api** (new binary, `cmd/api`): the only genuinely new service. Stateless where
+possible; state lives in CRDs/Secrets. Handles OIDC login, session/API tokens,
+Git-forge OAuth + webhooks, and translates REST calls into CRD mutations. Log/metric
+streaming proxied from the cluster (pod logs, Prometheus queries).
+
+**Web UI**: SPA served by k8zner-api. Views: cluster overview (nodes, health, phases —
+data the operator already has in `K8znerClusterStatus`), applications, databases &
+backups, monitoring (embed/link Grafana; render key series natively via the Prometheus
+API), node management (scale via CRD edit), audit log.
+
+**Operator extensions**: new controllers in `internal/operator/controller`, reusing the
+existing addon/Helm machinery.
+
+### 3.3 New CRDs (platform layer)
+
+- **`GitSource`** — a connected repository (forge, repo, credentials ref, webhook
+  secret). Created via forge OAuth flow in the UI or manually.
+- **`Application`** — the central PaaS object: source (GitSource ref + path, or OCI
+  image), build strategy (prebuilt image first; Buildpacks/Nixpacks builder later),
+  env/secrets refs, routes (host/path → automatic Gateway + Certificate + DNS),
+  resources/autoscaling, `previews: true` for branch deployments. Reconciled into an
+  ArgoCD Application (or ApplicationSet with a pull-request generator for previews) —
+  ArgoCD stays the delivery engine; k8zner owns the ergonomics.
+- **`Database`** — engine (PostgreSQL first via CloudNativePG), version, size, HA,
+  credentials as Secrets, optional `backupPolicyRef`.
+- **`BackupPolicy`** — schedule, retention, S3 target, scope (database ref). Reconciled
+  against the **Databasus** API (deployed as an addon) so backups are automated but
+  also fully manageable in Databasus' own terms. k8zner UI shows status, last backup,
+  restore actions — driving Databasus' API rather than reimplementing backup logic.
+
+### 3.4 Identity & multi-tenancy
+
+- **Phase A (single team, self-hosted):** OIDC via a bundled lightweight IdP (Dex) or
+  bring-your-own IdP; all authenticated users are cluster operators. API tokens for
+  automation.
+- **Phase B (orgs/projects):** Projects map to namespaces + RBAC + ResourceQuota +
+  NetworkPolicy. k8zner-api maps platform roles (owner/developer/viewer) to generated
+  K8s Roles. Still no separate authorization database — Kubernetes RBAC remains the
+  source of truth.
+- **Phase C (hosted multi-tenant):** one management cluster running k8zner-api +
+  fleet state; customer workload clusters registered as `K8znerCluster` objects
+  (the CRD becomes fleet-capable: one operator instance managing N clusters, or one
+  operator per cluster phoning home). This is the largest architectural step and is
+  deliberately last.
+
+### 3.5 Multi-provider & bring-your-own-server
+
+`internal/platform` already isolates Hetzner. Formalize a `Provider` interface
+(servers, networks, load balancers, volumes, images) and:
+
+1. Keep **hcloud** as the reference implementation.
+2. Add EU providers where Talos + API maturity allow (candidates: OVHcloud, Scaleway,
+   netcup; evaluate per-provider LB/CCM/CSI story — this is the real cost, not the
+   server API).
+3. **BYO-server**: a "null provider" — user brings machines that boot Talos (bare
+   metal/other VPS); k8zner handles Talos config, joining, addons, but not machine
+   lifecycle. This is cheaper to ship than a full second cloud provider and unlocks
+   the sovereignty story early.
+
+CCM/CSI/LB are the hard parts of any new provider. For BYO-server, default to
+kube-vip or Cilium LB-IPAM + local-path/Longhorn storage presets.
+
+### 3.6 CI/CD stance
+
+"Professional CI/CD" ≠ building a CI system. Position:
+
+- **CD is ours** (via ArgoCD under the hood): image promotion, branch previews,
+  rollbacks, health-gated syncs — surfaced properly in the UI.
+- **CI stays in the forge** (GitHub Actions / GitLab CI): k8zner provides ready-made
+  workflow templates and a registry story (start: forge registries; later: optional
+  in-cluster registry addon). An in-cluster build option (Buildpacks via kpack or a
+  simple BuildKit job) is a later convenience, not a foundation.
+
+## 4. Build vs. integrate
+
+| Capability | Decision | Component |
+|---|---|---|
+| TLS | integrate (done) | cert-manager |
+| DNS | integrate (done) | external-dns |
+| GitOps/CD engine | integrate (done) | ArgoCD (+ ApplicationSet PR generator) |
+| Metrics | integrate (done) | kube-prometheus-stack |
+| PostgreSQL | integrate | CloudNativePG |
+| DB backups | integrate | Databasus (addon + API-driven automation) |
+| App abstraction | **build** | `Application` CRD + controller |
+| Platform API + auth | **build** | k8zner-api (+ Dex bundled) |
+| Web UI | **build** | SPA |
+| Builds (later) | integrate | Buildpacks/kpack or BuildKit |
+| Logs (later) | integrate | Loki (addon), UI tails via K8s API meanwhile |
+
+## 5. Phased roadmap
+
+Each phase is independently shippable and valuable; stop-anywhere is a feature.
+
+1. **Phase 0 — Read-only dashboard (`platform: true` addon).**
+   New `cmd/api` + minimal SPA: cluster status (from `K8znerClusterStatus`), nodes,
+   discovered workloads, addon health, embedded Grafana links. Single admin auth
+   (OIDC or bootstrap token). *Proves the addon-delivered UI pipeline end-to-end with
+   minimal new surface.*
+2. **Phase 1 — Applications.**
+   `GitSource` + `Application` CRDs, forge OAuth + webhooks, deploy-from-image and
+   deploy-from-repo (manifests/Helm/Kustomize via ArgoCD), automatic route + TLS +
+   DNS, branch preview environments. This is the "Coolify moment" — the phase where
+   k8zner becomes a platform rather than a provisioner.
+3. **Phase 2 — Databases & backups.**
+   CNPG addon, `Database` CRD, Databasus addon, `BackupPolicy` automation, backup/
+   restore UX.
+4. **Phase 3 — Teams & projects.**
+   Orgs/projects → namespaces + RBAC + quotas; audit log; API tokens per project.
+5. **Phase 4 — Providers.**
+   `Provider` interface extraction, BYO-server (null provider), then a second EU
+   cloud provider.
+6. **Phase 5 — Hosted platform.**
+   Management-cluster fleet mode, billing, onboarding. Separate business decision;
+   architecture above intentionally keeps the door open.
+
+## 6. Repository & licensing strategy
+
+- **Stay monorepo for now**: `cmd/api`, `web/` (SPA), new controllers alongside
+  existing code. Shared CRD types and config are the whole point; splitting early
+  creates versioning drag. Revisit at Phase 5.
+- Core (CLI, operator, CRDs) stays **Apache-2.0**. Decide before Phase 3 whether the
+  platform layer stays fully open (recommended for adoption; monetize hosting/support)
+  or adopts an open-core line. Don't drift into this decision implicitly.
+
+## 7. Risks & open questions
+
+- **Scope**: this is 3–4 products. The phase gates exist to force sequencing; Phase 1
+  should not start until Phase 0 is shipped and used.
+- **ArgoCD coupling**: building app UX on ArgoCD is fast but couples us to its CRDs.
+  Mitigation: the `Application` CRD is ours; ArgoCD is an implementation detail behind
+  the controller and can be swapped (e.g. Flux) without breaking users.
+- **UI stack**: needs its own mini-ADR (framework, typed API client generation,
+  embedding strategy in the Go binary vs. separate image).
+- **Databasus maturity**: validate its API surface for headless automation before
+  committing `BackupPolicy` to it; fallback is CNPG's native Barman backups with
+  Databasus as optional UX.
+- **Single-cluster vs. fleet semantics** for `Application` (Phase 5 impact on Phase 1
+  API design): keep `clusterRef` optional-with-default in the CRD from day one so the
+  fleet case is additive.
+- **Name/branding**: "k8zner" is Hetzner-specific; a platform spanning providers may
+  want an umbrella name with k8zner as the Hetzner provider. Defer, but note it.
