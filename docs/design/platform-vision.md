@@ -282,6 +282,10 @@ Supported multi-cloud shapes, in order of recommendation:
 
 ## 5. Phased roadmap
 
+> **Execution plan:** Phases 0–2 are broken down into agent-ready work packages in
+> [`../plan/`](../plan/README.md); Phases 3–5 are tracked as epics in
+> [`../plan/epics.md`](../plan/epics.md).
+
 Each phase is independently shippable and valuable; stop-anywhere is a feature.
 
 1. **Phase 0 — Read-only dashboard (`platform: true` addon).**

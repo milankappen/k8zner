@@ -15,6 +15,8 @@
 |----------|-------------|
 | [Architecture](architecture.md) | System architecture — operator flow, phases, data flow, and project structure |
 | [Cluster Operator Design](design/cluster-operator.md) | Technical design rationale for the operator-first approach |
+| [Platform Vision](design/platform-vision.md) | Proposal: evolving k8zner into a Kubernetes-native infrastructure platform |
+| [Platform Plan](plan/README.md) | Agent-ready implementation plan for the platform vision — work packages, conventions, epics |
 
 ## Examples
 
