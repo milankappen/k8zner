@@ -80,7 +80,7 @@ jobs:
           helm push ".helm-packages/k8zner-operator-${VERSION}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: k8zner-operator ${{ steps.version.outputs.version }}
           body: |
